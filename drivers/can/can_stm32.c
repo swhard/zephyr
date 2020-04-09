@@ -1,3 +1,5 @@
+// clang-format off
+
 /*
  * Copyright (c) 2018 Alexander Wachter
  *
@@ -821,6 +823,7 @@ static inline int can_stm32_set_filter(const struct zcan_filter *filter,
 				       CAN_TypeDef *can,
 				       int *filter_index)
 {
+	// 
 	u32_t mask = 0U;
 	u32_t id = 0U;
 	int filter_nr = 0;
@@ -849,7 +852,7 @@ static inline int can_stm32_set_filter(const struct zcan_filter *filter,
 		}
 	}
 
-	register_demand = reg_demand[filter_type];
+	register_demand = reg_demand[filter_type]; // how many banked register you are using
 
 	LOG_DBG("Setting filter ID: 0x%x, mask: 0x%x", filter->ext_id,
 		    filter->ext_id_mask);
@@ -863,11 +866,11 @@ static inline int can_stm32_set_filter(const struct zcan_filter *filter,
 		    filter_type);
 
 	do {
-		u64_t usage_shifted = (device_data->filter_usage >> filter_nr);
-		u64_t usage_demand_mask = (1ULL << register_demand) - 1;
+		u64_t usage_shifted = (device_data->filter_usage >> filter_nr); // filter_usage seems to be a mask mi sposto del numero di filter_nr
+		u64_t usage_demand_mask = (1ULL << register_demand) - 1; // QUanti registri mi servono
 		bool bank_is_empty;
 
-		bank_nr = filter_nr / 4;
+		bank_nr = filter_nr / 4;   // filter_nr è più un numero di registri che di filtri
 		bank_bit = (1U << bank_nr);
 		bank_mode = can_stm32_get_filter_type(bank_nr, can->FM1R,
 						      can->FS1R);
@@ -876,13 +879,13 @@ static inline int can_stm32_set_filter(const struct zcan_filter *filter,
 						  bank_nr);
 
 		if (!bank_is_empty && bank_mode != filter_type) {
-			filter_nr = (bank_nr + 1) * 4;
-		} else if (usage_shifted & usage_demand_mask) {
-			device_data->filter_usage &=
+			filter_nr = (bank_nr + 1) * 4;					// Se c'è un filtro già fatto
+		} else if (usage_shifted & usage_demand_mask) {		// se 
+			device_data->filter_usage &=			
 				~(usage_demand_mask << filter_nr);
 			break;
 		} else {
-			filter_nr += register_demand;
+			filter_nr += register_demand;					// Conteggio dal filter number
 		}
 
 		if (!usage_shifted) {
@@ -1044,6 +1047,8 @@ static const struct can_driver_api can_api_funcs = {
 	.register_state_change_isr = can_stm32_register_state_change_isr
 };
 
+
+
 #ifdef CONFIG_CAN_1
 
 static void config_can_1_irq(CAN_TypeDef *can);
@@ -1130,6 +1135,7 @@ NET_DEVICE_INIT(socket_can_stm32_1, SOCKET_CAN_NAME_1, socket_can_init_1,
 
 #ifdef CONFIG_CAN_2
 
+
 static void config_can_2_irq(CAN_TypeDef *can);
 
 static const struct can_stm32_config can_stm32_cfg_2 = {
@@ -1205,3 +1211,5 @@ NET_DEVICE_INIT(socket_can_stm32_2, SOCKET_CAN_NAME_2, socket_can_init_2,
 #endif /* CONFIG_NET_SOCKETS_CAN */
 
 #endif /*CONFIG_CAN_2*/
+
+// clang-format on
