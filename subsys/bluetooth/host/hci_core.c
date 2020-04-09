@@ -344,6 +344,7 @@ int bt_hci_cmd_send_sync(u16_t opcode, struct net_buf *buf,
 			 struct net_buf **rsp)
 {
 	struct k_sem sync_sem;
+	u8_t status;
 	int err;
 
 	if (!buf) {
@@ -364,31 +365,30 @@ int bt_hci_cmd_send_sync(u16_t opcode, struct net_buf *buf,
 	net_buf_put(&bt_dev.cmd_tx_queue, buf);
 
 	err = k_sem_take(&sync_sem, HCI_CMD_TIMEOUT);
-	__ASSERT(err == 0, "k_sem_take failed with err %d", err);
+	BT_ASSERT_MSG(err == 0, "k_sem_take failed with err %d", err);
 
-	BT_DBG("opcode 0x%04x status 0x%02x", opcode, cmd(buf)->status);
-
-	if (cmd(buf)->status) {
-		switch (cmd(buf)->status) {
-		case BT_HCI_ERR_CONN_LIMIT_EXCEEDED:
-			err = -ECONNREFUSED;
-			break;
-		default:
-			err = -EIO;
-			break;
-		}
-
+	status = cmd(buf)->status;
+	if (status) {
+		BT_WARN("opcode 0x%04x status 0x%02x", opcode, status);
 		net_buf_unref(buf);
-	} else {
-		err = 0;
-		if (rsp) {
-			*rsp = buf;
-		} else {
-			net_buf_unref(buf);
+
+		switch (status) {
+		case BT_HCI_ERR_CONN_LIMIT_EXCEEDED:
+			return -ECONNREFUSED;
+		default:
+			return -EIO;
 		}
 	}
 
-	return err;
+	BT_DBG("rsp %p opcode 0x%04x len %u", buf, opcode, buf->len);
+
+	if (rsp) {
+		*rsp = buf;
+	} else {
+		net_buf_unref(buf);
+	}
+
+	return 0;
 }
 
 #if defined(CONFIG_BT_OBSERVER) || defined(CONFIG_BT_CONN)
@@ -605,6 +605,13 @@ static int set_adv_random_address(struct bt_le_ext_adv *adv,
 	}
 
 	BT_DBG("%s", bt_addr_str(addr));
+
+	if (!atomic_test_bit(adv->flags, BT_ADV_PARAMS_SET)) {
+		bt_addr_copy(&adv->random_addr.a, addr);
+		adv->random_addr.type = BT_ADDR_LE_RANDOM;
+		atomic_set_bit(adv->flags, BT_ADV_RANDOM_ADDR_PENDING);
+		return 0;
+	}
 
 	buf = bt_hci_cmd_create(BT_HCI_OP_LE_SET_ADV_SET_RANDOM_ADDR,
 				sizeof(*cp));
@@ -7402,6 +7409,15 @@ static int le_ext_adv_param_set(struct bt_le_ext_adv *adv,
 
 	net_buf_unref(rsp);
 
+	atomic_set_bit(adv->flags, BT_ADV_PARAMS_SET);
+
+	if (atomic_test_and_clear_bit(adv->flags, BT_ADV_RANDOM_ADDR_PENDING)) {
+		err = set_adv_random_address(adv, &adv->random_addr.a);
+		if (err) {
+			return err;
+		}
+	}
+
 	/* Todo: Figure out how keep advertising works with multiple adv sets */
 	atomic_set_bit_to(bt_dev.flags, BT_DEV_KEEP_ADVERTISING, false);
 
@@ -7429,7 +7445,7 @@ int bt_le_adv_start_ext(struct bt_le_ext_adv *adv,
 	};
 	bool dir_adv = (peer != NULL);
 	struct bt_conn *conn = NULL;
-	int err = 0;
+	int err;
 
 	if (!atomic_test_bit(bt_dev.flags, BT_DEV_READY)) {
 		return -EAGAIN;
@@ -7445,8 +7461,11 @@ int bt_le_adv_start_ext(struct bt_le_ext_adv *adv,
 
 	adv->id = param->id;
 
-	le_ext_adv_param_set(adv, param, peer,
-			     sd || (param->options & BT_LE_ADV_OPT_USE_NAME));
+	err = le_ext_adv_param_set(adv, param, peer, sd ||
+				   (param->options & BT_LE_ADV_OPT_USE_NAME));
+	if (err) {
+		return err;
+	}
 
 	if (!dir_adv) {
 		err = le_adv_update(adv, ad, ad_len, sd, sd_len,
