@@ -1645,7 +1645,7 @@ static int cmd_net_dns_query(const struct shell *shell, size_t argc,
 {
 
 #if defined(CONFIG_DNS_RESOLVER)
-#define DNS_TIMEOUT K_MSEC(2000) /* ms */
+#define DNS_TIMEOUT (MSEC_PER_SEC * 2) /* ms */
 	enum dns_query_type qtype = DNS_QUERY_TYPE_A;
 	char *host, *type = NULL;
 	int ret, arg = 1;
@@ -2970,7 +2970,7 @@ static int ping_ipv6(const struct shell *shell,
 			break;
 		}
 
-		k_sleep(interval);
+		k_msleep(interval);
 	}
 
 	remove_ipv6_ping_handler();
@@ -3075,7 +3075,7 @@ static int ping_ipv4(const struct shell *shell,
 			break;
 		}
 
-		k_sleep(interval);
+		k_msleep(interval);
 	}
 
 	remove_ipv4_ping_handler();
@@ -3213,7 +3213,7 @@ static int cmd_net_ppp_ping(const struct shell *shell, size_t argc,
 			return -ENOEXEC;
 		}
 
-		ret = net_ppp_ping(idx, K_SECONDS(1));
+		ret = net_ppp_ping(idx, MSEC_PER_SEC * 1);
 		if (ret < 0) {
 			if (ret == -EAGAIN) {
 				PR_INFO("PPP Echo-Req timeout.\n");

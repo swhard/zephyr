@@ -46,6 +46,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME, CONFIG_OPENTHREAD_L2_LOG_LEVEL);
 #define OT_WORKER_PRIORITY   K_PRIO_COOP(CONFIG_OPENTHREAD_THREAD_PRIORITY)
 
 enum pending_events {
+	PENDING_EVENT_FRAME_RECEIVED, /* Radio has received new frame */
 	PENDING_EVENT_TX_STARTED, /* Radio has started transmitting */
 	PENDING_EVENT_TX_DONE, /* Radio transmission finished */
 	PENDING_EVENT_DETECT_ENERGY, /* Requested to start Energy Detection
@@ -81,6 +82,8 @@ ATOMIC_DEFINE(pending_events, PENDING_EVENT_COUNT);
 K_THREAD_STACK_DEFINE(ot_task_stack, OT_WORKER_STACK_SIZE);
 static struct k_work_q ot_work_q;
 static otError tx_result;
+
+K_FIFO_DEFINE(rx_pkt_fifo);
 
 static inline bool is_pending_event_set(enum pending_events event)
 {
@@ -248,11 +251,9 @@ static inline void handle_tx_done(otInstance *aInstance)
 {
 	if (IS_ENABLED(OPENTHREAD_ENABLE_DIAG) && otPlatDiagModeGet()) {
 		otPlatDiagRadioTransmitDone(aInstance, &sTransmitFrame,
-					tx_result);
+					    tx_result);
 	} else {
 		if (sTransmitFrame.mPsdu[0] & IEEE802154_AR_FLAG_SET) {
-
-
 			if (ack_frame.mLength == 0) {
 				LOG_DBG("No ACK received.");
 				otPlatRadioTxDone(aInstance, &sTransmitFrame,
@@ -269,6 +270,43 @@ static inline void handle_tx_done(otInstance *aInstance)
 	}
 }
 
+static void openthread_handle_received_frame(otInstance *instance,
+					     struct net_pkt *pkt)
+{
+	otRadioFrame recv_frame;
+
+	recv_frame.mPsdu = net_buf_frag_last(pkt->buffer)->data;
+	/* Length inc. CRC. */
+	recv_frame.mLength = net_buf_frags_len(pkt->buffer);
+	recv_frame.mChannel = platformRadioChannelGet(instance);
+	recv_frame.mInfo.mRxInfo.mLqi = net_pkt_ieee802154_lqi(pkt);
+	recv_frame.mInfo.mRxInfo.mRssi = net_pkt_ieee802154_rssi(pkt);
+
+#if defined(CONFIG_NET_PKT_TIMESTAMP)
+	struct net_ptp_time *time = net_pkt_timestamp(pkt);
+
+	recv_frame.mInfo.mRxInfo.mTimestamp = time->second * USEC_PER_SEC +
+					      time->nanosecond / NSEC_PER_USEC;
+#endif
+
+	if (IS_ENABLED(OPENTHREAD_ENABLE_DIAG) && otPlatDiagModeGet()) {
+		otPlatDiagRadioReceiveDone(instance,
+					   &recv_frame, OT_ERROR_NONE);
+	} else {
+		otPlatRadioReceiveDone(instance,
+				       &recv_frame, OT_ERROR_NONE);
+	}
+
+	net_pkt_unref(pkt);
+}
+
+int notify_new_rx_frame(struct net_pkt *pkt)
+{
+	k_fifo_put(&rx_pkt_fifo, pkt);
+	set_pending_event(PENDING_EVENT_FRAME_RECEIVED);
+
+	return 0;
+}
 
 static int run_tx_task(otInstance *aInstance)
 {
@@ -290,6 +328,17 @@ static int run_tx_task(otInstance *aInstance)
 void platformRadioProcess(otInstance *aInstance)
 {
 	bool event_pending = false;
+
+	if (is_pending_event_set(PENDING_EVENT_FRAME_RECEIVED)) {
+		struct net_pkt *rx_pkt;
+
+		reset_pending_event(PENDING_EVENT_FRAME_RECEIVED);
+		while ((rx_pkt = (struct net_pkt *)k_fifo_get(&rx_pkt_fifo,
+							      K_NO_WAIT))
+		      != NULL) {
+			openthread_handle_received_frame(aInstance, rx_pkt);
+		}
+	}
 
 	if (is_pending_event_set(PENDING_EVENT_TX_STARTED)) {
 		reset_pending_event(PENDING_EVENT_TX_STARTED);
@@ -505,6 +554,10 @@ otRadioCaps otPlatRadioGetCaps(otInstance *aInstance)
 	if (radio_caps & IEEE802154_HW_CSMA) {
 		caps |= OT_RADIO_CAPS_CSMA_BACKOFF |
 			OT_RADIO_CAPS_TRANSMIT_RETRIES;
+	}
+
+	if (radio_caps & IEEE802154_HW_TX_RX_ACK) {
+		caps |= OT_RADIO_CAPS_ACK_TIMEOUT;
 	}
 
 	return caps;
