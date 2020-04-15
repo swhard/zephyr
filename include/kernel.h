@@ -76,26 +76,6 @@ extern "C" {
 #define K_HIGHEST_APPLICATION_THREAD_PRIO (K_HIGHEST_THREAD_PRIO)
 #define K_LOWEST_APPLICATION_THREAD_PRIO (K_LOWEST_THREAD_PRIO - 1)
 
-#ifdef CONFIG_WAITQ_SCALABLE
-
-typedef struct {
-	struct _priq_rb waitq;
-} _wait_q_t;
-
-extern bool z_priq_rb_lessthan(struct rbnode *a, struct rbnode *b);
-
-#define Z_WAIT_Q_INIT(wait_q) { { { .lessthan_fn = z_priq_rb_lessthan } } }
-
-#else
-
-typedef struct {
-	sys_dlist_t waitq;
-} _wait_q_t;
-
-#define Z_WAIT_Q_INIT(wait_q) { SYS_DLIST_STATIC_INIT(&(wait_q)->waitq) }
-
-#endif
-
 #ifdef CONFIG_OBJECT_TRACING
 #define _OBJECT_TRACING_NEXT_PTR(type) struct type *__next;
 #define _OBJECT_TRACING_LINKED_FLAG u8_t __linked;
@@ -4095,30 +4075,6 @@ static inline u32_t z_impl_k_msgq_num_used_get(struct k_msgq *msgq)
 /** @} */
 
 /**
- * @defgroup mem_pool_apis Memory Pool APIs
- * @ingroup kernel_apis
- * @{
- */
-
-/* Note on sizing: the use of a 20 bit field for block means that,
- * assuming a reasonable minimum block size of 16 bytes, we're limited
- * to 16M of memory managed by a single pool.  Long term it would be
- * good to move to a variable bit size based on configuration.
- */
-struct k_mem_block_id {
-	u32_t pool : 8;
-	u32_t level : 4;
-	u32_t block : 20;
-};
-
-struct k_mem_block {
-	void *data;
-	struct k_mem_block_id id;
-};
-
-/** @} */
-
-/**
  * @defgroup mailbox_apis Mailbox APIs
  * @ingroup kernel_apis
  * @{
@@ -4658,22 +4614,72 @@ static inline u32_t k_mem_slab_num_free_get(struct k_mem_slab *slab)
 /** @} */
 
 /**
- * @cond INTERNAL_HIDDEN
- */
-
-struct k_mem_pool {
-	struct sys_mem_pool_base base;
-	_wait_q_t wait_q;
-};
-
-/**
- * INTERNAL_HIDDEN @endcond
- */
-
-/**
  * @addtogroup mem_pool_apis
  * @{
  */
+
+/**
+ * @brief Initialize a k_heap
+ *
+ * This constructs a synchronized k_heap object over a memory region
+ * specified by the user.  Note that while any alignment and size can
+ * be passed as valid parameters, internal alignment restrictions
+ * inside the inner sys_heap mean that not all bytes may be usable as
+ * allocated memory.
+ *
+ * @param h Heap struct to initialize
+ * @param mem Pointer to memory.
+ * @param bytes Size of memory region, in bytes
+ */
+void k_heap_init(struct k_heap *h, void *mem, size_t bytes);
+
+/**
+ * @brief Allocate memory from a k_heap
+ *
+ * Allocates and returns a memory buffer from the memory region owned
+ * by the heap.  If no memory is available immediately, the call will
+ * block for the specified timeout (constructed via the standard
+ * timeout API, or K_NO_WAIT or K_FOREVER) waiting for memory to be
+ * freed.  If the allocation cannot be performed by the expiration of
+ * the timeout, NULL will be returned.
+ *
+ * @param h Heap from which to allocate
+ * @param bytes Desired size of block to allocate
+ * @param timeout How long to wait, or K_NO_WAIT
+ * @return A pointer to valid heap memory, or NULL
+ */
+void *k_heap_alloc(struct k_heap *h, size_t bytes, k_timeout_t timeout);
+
+/**
+ * @brief Free memory allocated by k_heap_alloc()
+ *
+ * Returns the specified memory block, which must have been returned
+ * from k_heap_alloc(), to the heap for use by other callers.  Passing
+ * a NULL block is legal, and has no effect.
+ *
+ * @param h Heap to which to return the memory
+ * @param mem A valid memory block, or NULL
+ */
+void k_heap_free(struct k_heap *h, void *mem);
+
+/**
+ * @brief Define a static k_heap
+ *
+ * This macro defines and initializes a static memory region and
+ * k_heap of the requested size.  After kernel start, &name can be
+ * used as if k_heap_init() had been called.
+ *
+ * @param name Symbol name for the struct k_heap object
+ * @param bytes Size of memory region, in bytes
+ */
+#define K_HEAP_DEFINE(name, bytes)				\
+	char __aligned(sizeof(void *)) kheap_##name[bytes];	\
+	Z_STRUCT_SECTION_ITERABLE(k_heap, name) = {		\
+		.heap = {					\
+			.init_mem = kheap_##name,		\
+			.init_bytes = (bytes),			\
+		 },						\
+	}
 
 /**
  * @brief Statically define and initialize a memory pool.
@@ -4686,6 +4692,14 @@ struct k_mem_pool {
  * If the pool is to be accessed outside the module where it is defined, it
  * can be declared via
  *
+ * @note When CONFIG_MEM_POOL_HEAP_BACKEND is enabled, the k_mem_pool
+ * API is implemented on top of a k_heap, which is a more general
+ * purpose allocator which does not make the same promises about
+ * splitting or alignment detailed above.  Blocks will be aligned only
+ * to the 8 byte chunk stride of the underlying heap and may point
+ * anywhere within the heap; they are not split into four as
+ * described.
+ *
  * @code extern struct k_mem_pool <name>; @endcode
  *
  * @param name Name of the memory pool.
@@ -4694,21 +4708,8 @@ struct k_mem_pool {
  * @param nmax Number of maximum sized blocks in the pool.
  * @param align Alignment of the pool's buffer (power of 2).
  */
-#define K_MEM_POOL_DEFINE(name, minsz, maxsz, nmax, align)		\
-	char __aligned(WB_UP(align)) _mpool_buf_##name[WB_UP(maxsz) * nmax \
-				  + _MPOOL_BITS_SIZE(maxsz, minsz, nmax)]; \
-	struct sys_mem_pool_lvl _mpool_lvls_##name[Z_MPOOL_LVLS(maxsz, minsz)]; \
-	Z_STRUCT_SECTION_ITERABLE(k_mem_pool, name) = { \
-		.base = {						\
-			.buf = _mpool_buf_##name,			\
-			.max_sz = WB_UP(maxsz),				\
-			.n_max = nmax,					\
-			.n_levels = Z_MPOOL_LVLS(maxsz, minsz),		\
-			.levels = _mpool_lvls_##name,			\
-			.flags = SYS_MEM_POOL_KERNEL			\
-		} \
-	}; \
-	BUILD_ASSERT(WB_UP(maxsz) >= _MPOOL_MINBLK, "K_MEM_POOL_DEFINE: size of the largest block (parameter maxsz) is too small")
+#define K_MEM_POOL_DEFINE(name, minsz, maxsz, nmax, align) \
+	Z_MEM_POOL_DEFINE(name, minsz, maxsz, nmax, align)
 
 /**
  * @brief Allocate memory from a memory pool.
