@@ -253,6 +253,8 @@ static int tcp_conn_unref(struct tcp *conn)
 
 	tcp_send_queue_flush(conn);
 
+	k_delayed_work_cancel(&conn->timewait_timer);
+
 	tcp_free(conn->src);
 	tcp_free(conn->dst);
 
@@ -348,8 +350,8 @@ static const char *tcp_state_to_str(enum tcp_state state, bool prefix)
 	_(TCP_SYN_SENT);
 	_(TCP_SYN_RECEIVED);
 	_(TCP_ESTABLISHED);
-	_(TCP_FIN_WAIT1);
-	_(TCP_FIN_WAIT2);
+	_(TCP_FIN_WAIT_1);
+	_(TCP_FIN_WAIT_2);
 	_(TCP_CLOSE_WAIT);
 	_(TCP_CLOSING);
 	_(TCP_LAST_ACK);
@@ -612,6 +614,15 @@ fail:
 	}
 }
 
+static void tcp_timewait_timeout(struct k_work *work)
+{
+	struct tcp *conn = CONTAINER_OF(work, struct tcp, timewait_timer);
+
+	NET_DBG("conn: %p %s", conn, log_strdup(tcp_conn_state(conn, NULL)));
+
+	tcp_conn_unref(conn);
+}
+
 static void tcp_conn_ref(struct tcp *conn)
 {
 	int ref_count = atomic_inc(&conn->ref_count) + 1;
@@ -640,6 +651,8 @@ static struct tcp *tcp_conn_alloc(void)
 	sys_slist_init(&conn->send_queue);
 
 	k_delayed_work_init(&conn->send_timer, tcp_send_process);
+
+	k_delayed_work_init(&conn->timewait_timer, tcp_timewait_timeout);
 
 	tcp_conn_ref(conn);
 
@@ -914,13 +927,20 @@ next_state:
 		}
 		break;
 	case TCP_CLOSED:
-		fl = 0;
 		tcp_conn_unref(conn);
 		break;
+	case TCP_FIN_WAIT_1:
+		if (th && FL(&fl, ==, (FIN | ACK), th_seq(th) == conn->ack)) {
+			tcp_send_timer_cancel(conn);
+			next = TCP_TIME_WAIT;
+		}
+		break;
 	case TCP_TIME_WAIT:
+		k_delayed_work_submit(&conn->timewait_timer,
+				      K_MSEC(CONFIG_NET_TCP_TIME_WAIT_DELAY));
+		break;
+	case TCP_FIN_WAIT_2:
 	case TCP_CLOSING:
-	case TCP_FIN_WAIT1:
-	case TCP_FIN_WAIT2:
 	default:
 		NET_ASSERT(false, "%s is unimplemented",
 			   tcp_state_to_str(conn->state, true));
@@ -937,7 +957,7 @@ next_state:
 	k_mutex_unlock(&conn->lock);
 }
 
-/* close() has been called on the socket */
+/* Active connection close: send FIN and go to FIN_WAIT_1 state */
 int net_tcp_put(struct net_context *context)
 {
 	struct tcp *conn = context->tcp;
@@ -945,8 +965,9 @@ int net_tcp_put(struct net_context *context)
 	NET_DBG("%s", conn ? log_strdup(tcp_conn_state(conn, NULL)) : "");
 
 	if (conn) {
-		conn->state = TCP_CLOSE_WAIT;
-		tcp_in(conn, NULL);
+		tcp_out(conn, FIN | ACK);
+
+		conn_state(conn, TCP_FIN_WAIT_1);
 	}
 
 	net_context_unref(context);
