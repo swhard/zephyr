@@ -45,7 +45,7 @@ struct sx1276_dio {
 #define SX1276_DIO_GPIO_INIT(n) \
 	UTIL_LISTIFY(DT_INST_PROP_LEN(n, dio_gpios), SX1276_DIO_GPIO_ELEM, n)
 
-static struct sx1276_dio sx1276_dios[] = { SX1276_DIO_GPIO_INIT(0) };
+static const struct sx1276_dio sx1276_dios[] = { SX1276_DIO_GPIO_INIT(0) };
 
 #define SX1276_MAX_DIO ARRAY_SIZE(sx1276_dios)
 
@@ -55,6 +55,7 @@ struct sx1276_data {
 	struct device *spi;
 	struct spi_config spi_cfg;
 	struct device *dio_dev[SX1276_MAX_DIO];
+	struct k_work dio_work[SX1276_MAX_DIO];
 	struct k_sem data_sem;
 	RadioEvents_t sx1276_event;
 	u8_t *rx_buf;
@@ -156,6 +157,13 @@ void DelayMsMcu(uint32_t ms)
 	k_sleep(ms);
 }
 
+static void sx1276_dio_work_handle(struct k_work *work)
+{
+	int dio = work - dev_data.dio_work;
+
+	(*DioIrq[dio])(NULL);
+}
+
 static void sx1276_irq_callback(struct device *dev,
 				struct gpio_callback *cb, u32_t pins)
 {
@@ -164,8 +172,9 @@ static void sx1276_irq_callback(struct device *dev,
 	pin = find_lsb_set(pins) - 1;
 
 	for (i = 0; i < SX1276_MAX_DIO; i++) {
-		if (pin == sx1276_dios[i].pin) {
-			(*DioIrq[i])(NULL);
+		if (dev == dev_data.dio_dev[i] &&
+		    pin == sx1276_dios[i].pin) {
+			k_work_submit(&dev_data.dio_work[i]);
 		}
 	}
 }
@@ -177,12 +186,18 @@ void SX1276IoIrqInit(DioIrqHandler **irqHandlers)
 
 	/* Setup DIO gpios */
 	for (i = 0; i < SX1276_MAX_DIO; i++) {
+		if (!irqHandlers[i]) {
+			continue;
+		}
+
 		dev_data.dio_dev[i] = device_get_binding(sx1276_dios[i].port);
 		if (dev_data.dio_dev[i] == NULL) {
 			LOG_ERR("Cannot get pointer to %s device",
 				sx1276_dios[i].port);
 			return;
 		}
+
+		k_work_init(&dev_data.dio_work[i], sx1276_dio_work_handle);
 
 		gpio_pin_configure(dev_data.dio_dev[i], sx1276_dios[i].pin,
 				   GPIO_INPUT | GPIO_INT_DEBOUNCE

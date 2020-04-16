@@ -48,15 +48,19 @@ def main():
         write_top_comment(edt)
 
         for node in sorted(edt.nodes, key=lambda node: node.dep_ordinal):
-            node.z_path_id = "N_" + "_".join(
-                f"S_{str2ident(name)}" for name in node.path[1:].split("/"))
+            node.z_path_id = node_z_path_id(node)
             write_node_comment(node)
 
+            if node.parent is not None:
+                out_comment(f"Node parent ({node.parent.path}) identifier:")
+                out_dt_define(f"{node.z_path_id}_PARENT",
+                              f"DT_{node.parent.z_path_id}")
+
             if not node.enabled:
-                out_comment("No macros: node is disabled")
+                out_comment("No node macros: node is disabled")
                 continue
             if not node.matching_compat:
-                out_comment("No macros: node has no matching binding")
+                out_comment("No node macros: node has no matching binding")
                 continue
 
             write_idents_and_existence(node)
@@ -67,6 +71,24 @@ def main():
         write_chosen(edt)
         write_global_compat_info(edt)
 
+
+def node_z_path_id(node):
+    # Return the node specific bit of the node's path identifier:
+    #
+    # - the root node's path "/" has path identifier "N"
+    # - "/foo" has "N_S_foo"
+    # - "/foo/bar" has "N_S_foo_S_bar"
+    # - "/foo/bar@123" has "N_S_foo_S_bar_123"
+    #
+    # This is used throughout this file to generate macros related to
+    # the node.
+
+    components = ["N"]
+    if node.parent is not None:
+        components.extend(f"S_{str2ident(component)}" for component in
+                          node.path.split("/")[1:])
+
+    return "_".join(components)
 
 def parse_args():
     # Returns parsed command-line arguments
@@ -122,17 +144,15 @@ def write_node_comment(node):
     # Writes a comment describing 'node' to the header and configuration file
 
     s = f"""\
-Devicetree node:
-  {node.path}
+Devicetree node: {node.path}
+
+Node's generated path identifier: DT_{node.z_path_id}
 """
 
     if node.matching_compat:
         s += f"""
 Binding (compatible = {node.matching_compat}):
   {relativize(node.binding_path)}
-"""
-        s += f"""
-Node's path identifier in this file: {node.z_path_id}
 """
 
     s += f"\nDependency Ordinal: {node.dep_ordinal}\n"
