@@ -46,6 +46,44 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <net/gptp.h>
 #endif
 
+#ifdef __DCACHE_PRESENT
+static bool dcache_enabled;
+
+static inline void dcache_is_enabled(void)
+{
+	dcache_enabled = (SCB->CCR & SCB_CCR_DC_Msk);
+}
+static inline void dcache_invalidate(u32_t addr, u32_t size)
+{
+	if (!dcache_enabled) {
+		return;
+	}
+
+	/* Make sure it is aligned to 32B */
+	u32_t start_addr = addr & (u32_t)~(GMAC_DCACHE_ALIGNMENT - 1);
+	u32_t size_full = size + addr - start_addr;
+
+	SCB_InvalidateDCache_by_Addr((uint32_t *)start_addr, size_full);
+}
+
+static inline void dcache_clean(u32_t addr, u32_t size)
+{
+	if (!dcache_enabled) {
+		return;
+	}
+
+	/* Make sure it is aligned to 32B */
+	u32_t start_addr = addr & (u32_t)~(GMAC_DCACHE_ALIGNMENT - 1);
+	u32_t size_full = size + addr - start_addr;
+
+	SCB_CleanDCache_by_Addr((uint32_t *)start_addr, size_full);
+}
+#else
+#define dcache_is_enabled()
+#define dcache_invalidate(addr, size)
+#define dcache_clean(addr, size)
+#endif
+
 /*
  * Verify Kconfig configuration
  */
@@ -318,7 +356,7 @@ static int queue_init(Gmac *gmac, struct gmac_queue *queue)
 	return nonpriority_queue_init(gmac, queue);
 }
 
-#define disable_all_queue_interrupt(gmac)
+#define disable_all_priority_queue_interrupt(gmac)
 
 #endif
 
@@ -339,38 +377,6 @@ static inline void eth_sam_gmac_init_qav(Gmac *gmac)
 #define eth_sam_gmac_init_qav(gmac)
 
 #endif
-
-/*
- * Cache helpers
- */
-
-static bool dcache_enabled;
-
-static inline void dcache_invalidate(u32_t addr, u32_t size)
-{
-	if (!dcache_enabled) {
-		return;
-	}
-
-	/* Make sure it is aligned to 32B */
-	u32_t start_addr = addr & (u32_t)~(GMAC_DCACHE_ALIGNMENT - 1);
-	u32_t size_full = size + addr - start_addr;
-
-	SCB_InvalidateDCache_by_Addr((uint32_t *)start_addr, size_full);
-}
-
-static inline void dcache_clean(u32_t addr, u32_t size)
-{
-	if (!dcache_enabled) {
-		return;
-	}
-
-	/* Make sure it is aligned to 32B */
-	u32_t start_addr = addr & (u32_t)~(GMAC_DCACHE_ALIGNMENT - 1);
-	u32_t size_full = size + addr - start_addr;
-
-	SCB_CleanDCache_by_Addr((uint32_t *)start_addr, size_full);
-}
 
 #if GMAC_MULTIPLE_TX_PACKETS == 1
 /*
@@ -1085,10 +1091,7 @@ static int gmac_init(Gmac *gmac, u32_t gmac_ncfgr_val)
 	/* Setup Network Configuration Register */
 	gmac->GMAC_NCFGR = gmac_ncfgr_val | mck_divisor;
 
-#ifdef CONFIG_ETH_SAM_GMAC_MII
-	/* Setup MII Interface to the Physical Layer, RMII is the default */
-	gmac->GMAC_UR = GMAC_UR_RMII; /* setting RMII to 1 selects MII mode */
-#endif
+	gmac->GMAC_UR = DT_ENUM_IDX(DT_NODELABEL(gmac), phy_connection_type);
 
 #if defined(CONFIG_PTP_CLOCK_SAM_GMAC)
 	/* Initialize PTP Clock Registers */
@@ -1193,16 +1196,12 @@ static int nonpriority_queue_init(Gmac *gmac, struct gmac_queue *queue)
 
 	/* Configure GMAC DMA transfer */
 	gmac->GMAC_DCFGR =
-		  /* Receive Buffer Size (defined in multiples of 64 bytes) */
-		  GMAC_DCFGR_DRBS(CONFIG_NET_BUF_DATA_SIZE >> 6)
-		  /* 4 kB Receiver Packet Buffer Memory Size */
-		| GMAC_DCFGR_RXBMS_FULL
-		  /* 4 kB Transmitter Packet Buffer Memory Size */
-		| GMAC_DCFGR_TXPBMS
-		  /* Transmitter Checksum Generation Offload Enable */
-		| GMAC_DCFGR_TXCOEN
-		  /* Attempt to use INCR4 AHB bursts (Default) */
-		| GMAC_DCFGR_FBLDO_INCR4;
+		/* Receive Buffer Size (defined in multiples of 64 bytes) */
+		GMAC_DCFGR_DRBS(CONFIG_NET_BUF_DATA_SIZE >> 6) |
+		/* Attempt to use INCR4 AHB bursts (Default) */
+		GMAC_DCFGR_FBLDO_INCR4 |
+		/* DMA Queue Flags */
+		GMAC_DMA_QUEUE_FLAGS;
 
 	/* Setup RX/TX completion and error interrupts */
 	gmac->GMAC_IER = GMAC_INT_EN_FLAGS;
@@ -1875,14 +1874,15 @@ static void eth0_iface_init(struct net_if *iface)
 	}
 
 	/* Check the status of data caches */
-	dcache_enabled = (SCB->CCR & SCB_CCR_DC_Msk);
+	dcache_is_enabled();
 
-	/* Initialize GMAC driver, maximum frame length is 1518 bytes */
+	/* Initialize GMAC driver */
 	gmac_ncfgr_val =
 		  GMAC_NCFGR_MTIHEN  /* Multicast Hash Enable */
 		| GMAC_NCFGR_LFERD   /* Length Field Error Frame Discard */
 		| GMAC_NCFGR_RFCS    /* Remove Frame Check Sequence */
-		| GMAC_NCFGR_RXCOEN; /* Receive Checksum Offload Enable */
+		| GMAC_NCFGR_RXCOEN  /* Receive Checksum Offload Enable */
+		| GMAC_MAX_FRAME_SIZE;
 	result = gmac_init(cfg->regs, gmac_ncfgr_val);
 	if (result < 0) {
 		LOG_ERR("Unable to initialize ETH driver");
