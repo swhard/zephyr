@@ -48,6 +48,10 @@ static void dispatch_frame(const struct zcan_frame *frame,
 							    "extended",
 		frame->rtr == CAN_DATAFRAME ? "" : ", RTR frame");
 
+	LOG_INF("data %d %d %d %d %d %d %d %d ", frame->data[0], frame->data[1],
+		frame->data[2], frame->data[3], frame->data[4], frame->data[5],
+		frame->data[6], frame->data[7]);
+
 	filter->rx_cb(&frame_tmp, filter->cb_arg);
 }
 
@@ -164,6 +168,7 @@ int can_loopback_attach_isr(struct device *dev, can_rx_callback_t isr,
 	struct can_loopback_filter *loopback_filter;
 	int filter_id;
 
+	LOG_DBG("");
 	LOG_DBG("Setting filter ID: 0x%x, mask: 0x%x", filter->ext_id,
 		filter->ext_id_mask);
 	LOG_DBG("Filter type: %s ID %s mask",
