@@ -738,6 +738,7 @@ static int cmd_advertise(const struct shell *shell, size_t argc, char *argv[])
 		return 0;
 	}
 
+	param.peer = NULL;
 	param.id = selected_id;
 	param.interval_min = BT_GAP_ADV_FAST_INT_MIN_2;
 	param.interval_max = BT_GAP_ADV_FAST_INT_MAX_2;
@@ -1024,7 +1025,8 @@ static int cmd_adv_data(const struct shell *shell, size_t argc, char *argv[])
 		}
 	}
 
-	err = bt_le_ext_adv_set_data(adv, ad, ad_len, sd, sd_len);
+	err = bt_le_ext_adv_set_data(adv, ad_len > 0 ? ad : NULL, ad_len,
+					  sd_len > 0 ? sd : NULL, sd_len);
 	if (err) {
 		shell_print(shell, "Failed to set advertising set data (%d)",
 			    err);

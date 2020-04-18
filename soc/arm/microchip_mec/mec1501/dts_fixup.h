@@ -10,9 +10,6 @@
  * generated data matches the driver definitions.
  */
 
-
-#define DT_NUM_IRQ_PRIO_BITS \
-	DT_ARM_V7M_NVIC_E000E100_ARM_NUM_IRQ_PRIORITY_BITS
 #if defined(DT_NS16550_400F2400_REG_SHIFT)
 #define DT_NS16550_REG_SHIFT DT_NS16550_400F2400_REG_SHIFT
 #elif defined(DT_NS16550_400F2800_REG_SHIFT)
@@ -68,8 +65,6 @@
 #define DT_ADC_0_NAME				DT_LABEL(DT_INST(0, microchip_xec_adc))
 
 #define DT_RTC_0_NAME				DT_LABEL(DT_INST(0, microchip_xec_timer))
-
-#define DT_WDT_0_NAME				DT_LABEL(DT_INST(0, microchip_xec_watchdog))
 
 #define DT_KSCAN_0_NAME				DT_LABEL(DT_INST(0, microchip_xec_kscan))
 
