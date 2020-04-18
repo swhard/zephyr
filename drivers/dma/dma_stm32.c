@@ -24,7 +24,17 @@
 #include <logging/log.h>
 LOG_MODULE_REGISTER(dma_stm32, CONFIG_DMA_LOG_LEVEL);
 
-#include <drivers/clock_control/stm32_clock_control.h>
+static u32_t table_m_size[] = {
+	LL_DMA_MDATAALIGN_BYTE,
+	LL_DMA_MDATAALIGN_HALFWORD,
+	LL_DMA_MDATAALIGN_WORD,
+};
+
+static u32_t table_p_size[] = {
+	LL_DMA_PDATAALIGN_BYTE,
+	LL_DMA_PDATAALIGN_HALFWORD,
+	LL_DMA_PDATAALIGN_WORD,
+};
 
 static void dma_stm32_dump_stream_irq(struct device *dev, u32_t id)
 {
@@ -70,19 +80,22 @@ static void dma_stm32_irq_handler(void *arg)
 	stream = &data->streams[id];
 	stream->busy = false;
 
+	/* the dma stream id is in range from STREAM_OFFSET..<dma-requests> */
 	if (func_ll_is_active_tc[id](dma)) {
 		func_ll_clear_tc[id](dma);
-
-		stream->dma_callback(stream->callback_arg, id, 0);
+		stream->dma_callback(stream->callback_arg, id + STREAM_OFFSET,
+				     0);
 	} else if (stm32_dma_is_unexpected_irq_happened(dma, id)) {
 		LOG_ERR("Unexpected irq happened.");
-		stream->dma_callback(stream->callback_arg, id, -EIO);
+		stream->dma_callback(stream->callback_arg, id + STREAM_OFFSET,
+				     -EIO);
 	} else {
 		LOG_ERR("Transfer Error.");
 		dma_stm32_dump_stream_irq(dev, id);
 		dma_stm32_clear_stream_irq(dev, id);
 
-		stream->dma_callback(stream->callback_arg, id, -EIO);
+		stream->dma_callback(stream->callback_arg, id + STREAM_OFFSET,
+				     -EIO);
 	}
 }
 
@@ -201,7 +214,7 @@ static int dma_stm32_configure(struct device *dev, u32_t id,
 			       struct dma_config *config)
 {
 	struct dma_stm32_data *data = dev->driver_data;
-	struct dma_stm32_stream *stream = &data->streams[id];
+	struct dma_stm32_stream *stream = &data->streams[id - STREAM_OFFSET];
 	const struct dma_stm32_config *dev_config =
 					dev->config->config_info;
 	DMA_TypeDef *dma = (DMA_TypeDef *)dev_config->base;
@@ -209,11 +222,16 @@ static int dma_stm32_configure(struct device *dev, u32_t id,
 	u32_t msize;
 	int ret;
 
+	/* give channel from index 0 */
+	id = id - STREAM_OFFSET;
+
 	if (id >= data->max_streams) {
+		LOG_ERR("cannot configure the dma stream %d.", id);
 		return -EINVAL;
 	}
 
 	if (stream->busy) {
+		LOG_ERR("dma stream %d is busy.", id);
 		return -EBUSY;
 	}
 
@@ -269,6 +287,15 @@ static int dma_stm32_configure(struct device *dev, u32_t id,
 	stream->src_size	= config->source_data_size;
 	stream->dst_size	= config->dest_data_size;
 
+	/* check dest or source memory address, warn if 0 */
+	if ((config->head_block->source_address == 0)) {
+		LOG_WRN("source_buffer address is null.");
+	}
+
+	if ((config->head_block->dest_address == 0)) {
+		LOG_WRN("dest_buffer address is null.");
+	}
+
 	if (stream->direction == MEMORY_TO_PERIPHERAL) {
 		DMA_InitStruct.MemoryOrM2MDstAddress =
 					config->head_block->source_address;
@@ -306,6 +333,10 @@ static int dma_stm32_configure(struct device *dev, u32_t id,
 		periph_addr_adj = config->head_block->dest_addr_adj;
 		break;
 	/* Direction has been asserted in dma_stm32_get_direction. */
+	default:
+		LOG_ERR("Channel direction error (%d).",
+				config->channel_direction);
+		return -EINVAL;
 	}
 
 	ret = dma_stm32_get_memory_increment(memory_addr_adj,
@@ -368,10 +399,17 @@ static int dma_stm32_configure(struct device *dev, u32_t id,
 		DMA_InitStruct.NbData = config->head_block->block_size /
 					config->dest_data_size;
 	}
-
+#if defined(CONFIG_DMA_STM32_V2)
+	/*
+	 * the with dma V2,
+	 * the request ID is stored in the dma_slot
+	 */
+	DMA_InitStruct.PeriphRequest = config->dma_slot;
+#endif
 	LL_DMA_Init(dma, table_ll_stream[id], &DMA_InitStruct);
 
 	LL_DMA_EnableIT_TC(dma, table_ll_stream[id]);
+	/* Half-Transfer irq is not handled */
 
 #if defined(CONFIG_DMA_STM32_V1)
 	if (DMA_InitStruct.FIFOMode == LL_DMA_FIFOMODE_ENABLE) {
@@ -385,7 +423,7 @@ static int dma_stm32_configure(struct device *dev, u32_t id,
 	return ret;
 }
 
-int dma_stm32_disable_stream(DMA_TypeDef *dma, u32_t id)
+static int dma_stm32_disable_stream(DMA_TypeDef *dma, u32_t id)
 {
 	int count = 0;
 
@@ -409,7 +447,10 @@ static int dma_stm32_reload(struct device *dev, u32_t id,
 	const struct dma_stm32_config *config = dev->config->config_info;
 	DMA_TypeDef *dma = (DMA_TypeDef *)(config->base);
 	struct dma_stm32_data *data = dev->driver_data;
-	struct dma_stm32_stream *stream = &data->streams[id];
+	struct dma_stm32_stream *stream = &data->streams[id - STREAM_OFFSET];
+
+	/* give channel from index 0 */
+	id = id - STREAM_OFFSET;
 
 	if (id >= data->max_streams) {
 		return -EINVAL;
@@ -445,6 +486,9 @@ static int dma_stm32_start(struct device *dev, u32_t id)
 	DMA_TypeDef *dma = (DMA_TypeDef *)(config->base);
 	struct dma_stm32_data *data = dev->driver_data;
 
+	/* give channel from index 0 */
+	id = id - STREAM_OFFSET;
+
 	/* Only M2P or M2M mode can be started manually. */
 	if (id >= data->max_streams) {
 		return -EINVAL;
@@ -460,10 +504,13 @@ static int dma_stm32_start(struct device *dev, u32_t id)
 static int dma_stm32_stop(struct device *dev, u32_t id)
 {
 	struct dma_stm32_data *data = dev->driver_data;
-	struct dma_stm32_stream *stream = &data->streams[id];
+	struct dma_stm32_stream *stream = &data->streams[id - STREAM_OFFSET];
 	const struct dma_stm32_config *config =
 				dev->config->config_info;
 	DMA_TypeDef *dma = (DMA_TypeDef *)(config->base);
+
+	/* give channel from index 0 */
+	id = id - STREAM_OFFSET;
 
 	if (id >= data->max_streams) {
 		return -EINVAL;

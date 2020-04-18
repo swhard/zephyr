@@ -393,7 +393,7 @@ static bool tcp_options_check(void *buf, ssize_t len)
 			continue;
 		} else {
 			if (len < 2) { /* Only END and NOP can have length 1 */
-				NET_ERR("Illegal option %d with length %d",
+				NET_ERR("Illegal option %d with length %zd",
 					opt, len);
 				result = false;
 				break;
@@ -702,8 +702,8 @@ static bool tcp_endpoint_cmp(union tcp_endpoint *ep, struct net_pkt *pkt,
 
 static bool tcp_conn_cmp(struct tcp *conn, struct net_pkt *pkt)
 {
-	return tcp_endpoint_cmp(conn->src, pkt, DST) &&
-		tcp_endpoint_cmp(conn->dst, pkt, SRC);
+	return tcp_endpoint_cmp(conn->src, pkt, TCP_EP_DST) &&
+		tcp_endpoint_cmp(conn->dst, pkt, TCP_EP_SRC);
 }
 
 static struct tcp *tcp_conn_search(struct net_pkt *pkt)
@@ -789,8 +789,8 @@ static struct tcp *tcp_conn_new(struct net_pkt *pkt)
 
 	net_context_set_family(conn->context, pkt->family);
 
-	conn->dst = tcp_endpoint_new(pkt, SRC);
-	conn->src = tcp_endpoint_new(pkt, DST);
+	conn->dst = tcp_endpoint_new(pkt, TCP_EP_SRC);
+	conn->src = tcp_endpoint_new(pkt, TCP_EP_DST);
 
 	NET_DBG("conn: src: %s, dst: %s",
 		log_strdup(tcp_endpoint_to_string(conn->src)),
@@ -1064,7 +1064,7 @@ int net_tcp_connect(struct net_context *context,
 		ip4 = net_if_ipv4_select_src_addr(net_context_get_iface(context),
 						  (struct in_addr *)remote_addr);
 		conn->src->sin.sin_addr = *ip4;
-		conn->dst->sa = *remote_addr;
+		conn->dst->sin.sin_addr = ((struct sockaddr_in *)remote_addr)->sin_addr;
 		break;
 
 	case AF_INET6:
@@ -1259,8 +1259,8 @@ static enum net_verdict tcp_input(struct net_conn *net_conn,
 			net_tcp_get(context);
 			net_context_set_family(context, pkt->family);
 			conn = context->tcp;
-			conn->dst = tcp_endpoint_new(pkt, SRC);
-			conn->src = tcp_endpoint_new(pkt, DST);
+			conn->dst = tcp_endpoint_new(pkt, TCP_EP_SRC);
+			conn->src = tcp_endpoint_new(pkt, TCP_EP_DST);
 			/* Make an extra reference, the sanity check suite
 			 * will delete the connection explicitly
 			 */
@@ -1379,8 +1379,8 @@ enum net_verdict tp_input(struct net_conn *net_conn,
 				net_tcp_get(context);
 				net_context_set_family(context, pkt->family);
 				conn = context->tcp;
-				conn->dst = tcp_endpoint_new(pkt, SRC);
-				conn->src = tcp_endpoint_new(pkt, DST);
+				conn->dst = tcp_endpoint_new(pkt, TCP_EP_SRC);
+				conn->src = tcp_endpoint_new(pkt, TCP_EP_DST);
 				conn->iface = pkt->iface;
 				tcp_conn_ref(conn);
 			}
