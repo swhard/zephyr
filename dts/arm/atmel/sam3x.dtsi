@@ -7,6 +7,8 @@
 #include <arm/armv7-m.dtsi>
 #include <dt-bindings/i2c/i2c.h>
 
+#include "sam3x-pinctrl.dtsi"
+
 / {
 	aliases {
 		watchdog0 = &wdt;
@@ -86,6 +88,7 @@
 			peripheral-id = <8>;
 			status = "disabled";
 			label = "UART_0";
+			pinctrl-0 = <&pa8a_uart_urxd &pa9a_uart_utxd>;
 		};
 
 		usart0: usart@40098000 {
@@ -138,6 +141,7 @@
 				label = "PIO_A";
 				gpio-controller;
 				#gpio-cells = <2>;
+				#atmel,pin-cells = <2>;
 			};
 
 			piob: pio@400e1000 {
@@ -148,6 +152,7 @@
 				label = "PIO_B";
 				gpio-controller;
 				#gpio-cells = <2>;
+				#atmel,pin-cells = <2>;
 			};
 
 			pioc: pio@400e1200 {
@@ -158,6 +163,7 @@
 				label = "PIO_C";
 				gpio-controller;
 				#gpio-cells = <2>;
+				#atmel,pin-cells = <2>;
 			};
 
 			piod: pio@400e1400 {
@@ -168,6 +174,7 @@
 				label = "PIO_D";
 				gpio-controller;
 				#gpio-cells = <2>;
+				#atmel,pin-cells = <2>;
 			};
 
 			pioe: pio@400e1600 {
@@ -178,6 +185,7 @@
 				label = "PIO_E";
 				gpio-controller;
 				#gpio-cells = <2>;
+				#atmel,pin-cells = <2>;
 			};
 		};
 	};
