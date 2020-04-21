@@ -121,38 +121,56 @@ void hci_evt_create(struct net_buf *buf, u8_t evt, u8_t len)
 	hdr->len = len;
 }
 
-void *hci_cmd_complete(struct net_buf **buf, u8_t plen)
+struct net_buf *bt_hci_evt_create(u8_t evt, u8_t len)
 {
-	struct bt_hci_evt_cmd_complete *cc;
-
-	*buf = bt_buf_get_evt(BT_HCI_EVT_CMD_COMPLETE, false, K_FOREVER);
-
-	hci_evt_create(*buf, BT_HCI_EVT_CMD_COMPLETE, sizeof(*cc) + plen);
-
-	cc = net_buf_add(*buf, sizeof(*cc));
-	cc->ncmd = 1U;
-	cc->opcode = sys_cpu_to_le16(_opcode);
-
-	return net_buf_add(*buf, plen);
-}
-
-#if defined(CONFIG_BT_CONN)
-static struct net_buf *cmd_status(u8_t status)
-{
-	struct bt_hci_evt_cmd_status *cs;
 	struct net_buf *buf;
 
-	buf = bt_buf_get_evt(BT_HCI_EVT_CMD_STATUS, false, K_FOREVER);
-	hci_evt_create(buf, BT_HCI_EVT_CMD_STATUS, sizeof(*cs));
+	buf = bt_buf_get_evt(evt, false, K_FOREVER);
+	hci_evt_create(buf, evt, len);
+
+	return buf;
+}
+
+struct net_buf *bt_hci_cmd_complete_create(u16_t op, u8_t plen)
+{
+	struct net_buf *buf;
+	struct bt_hci_evt_cmd_complete *cc;
+
+	buf = bt_hci_evt_create(BT_HCI_EVT_CMD_COMPLETE, sizeof(*cc) + plen);
+
+	cc = net_buf_add(buf, sizeof(*cc));
+	cc->ncmd = 1U;
+	cc->opcode = sys_cpu_to_le16(op);
+
+	return buf;
+}
+
+struct net_buf *bt_hci_cmd_status_create(u16_t op, u8_t status)
+{
+	struct net_buf *buf;
+	struct bt_hci_evt_cmd_status *cs;
+
+	buf = bt_hci_evt_create(BT_HCI_EVT_CMD_STATUS, sizeof(*cs));
 
 	cs = net_buf_add(buf, sizeof(*cs));
 	cs->status = status;
 	cs->ncmd = 1U;
-	cs->opcode = sys_cpu_to_le16(_opcode);
+	cs->opcode = sys_cpu_to_le16(op);
 
 	return buf;
 }
-#endif
+
+void *hci_cmd_complete(struct net_buf **buf, u8_t plen)
+{
+	*buf = bt_hci_cmd_complete_create(_opcode, plen);
+
+	return net_buf_add(*buf, plen);
+}
+
+static struct net_buf *cmd_status(u8_t status)
+{
+	return bt_hci_cmd_status_create(_opcode, status);
+}
 
 static void *meta_evt(struct net_buf *buf, u8_t subevt, u8_t melen)
 {
@@ -1883,6 +1901,12 @@ static void vs_read_supported_commands(struct net_buf *buf,
 	/* Write Tx Power, Read Tx Power */
 	rp->commands[1] |= BIT(5) | BIT(6);
 #endif /* CONFIG_BT_CTLR_TX_PWR_DYNAMIC_CONTROL */
+#if defined(CONFIG_USB_DEVICE_BLUETOOTH_VS_H4)
+	/* Read Supported USB Transport Modes */
+	rp->commands[1] |= BIT(7);
+	/* Set USB Transport Mode */
+	rp->commands[2] |= BIT(0);
+#endif /* USB_DEVICE_BLUETOOTH_VS_H4 */
 #endif /* CONFIG_BT_HCI_VS_EXT */
 }
 
@@ -2189,6 +2213,14 @@ int hci_vendor_cmd_handle_common(u16_t ocf, struct net_buf *cmd,
 		vs_read_supported_features(cmd, evt);
 		break;
 
+#if defined(CONFIG_USB_DEVICE_BLUETOOTH_VS_H4)
+	case BT_OCF(BT_HCI_OP_VS_READ_USB_TRANSPORT_MODE):
+		break;
+	case BT_OCF(BT_HCI_OP_VS_SET_USB_TRANSPORT_MODE):
+		reset(cmd, evt);
+		break;
+#endif /* CONFIG_USB_DEVICE_BLUETOOTH_VS_H4 */
+
 #if defined(CONFIG_BT_HCI_VS_EXT)
 	case BT_OCF(BT_HCI_OP_VS_READ_BUILD_INFO):
 		vs_read_build_info(cmd, evt);
@@ -2233,7 +2265,6 @@ int hci_vendor_cmd_handle_common(u16_t ocf, struct net_buf *cmd,
 
 struct net_buf *hci_cmd_handle(struct net_buf *cmd, void **node_rx)
 {
-	struct bt_hci_evt_cc_status *ccst;
 	struct bt_hci_cmd_hdr *chdr;
 	struct net_buf *evt = NULL;
 	u16_t ocf;
@@ -2282,8 +2313,7 @@ struct net_buf *hci_cmd_handle(struct net_buf *cmd, void **node_rx)
 	}
 
 	if (err == -EINVAL) {
-		ccst = hci_cmd_complete(&evt, sizeof(*ccst));
-		ccst->status = BT_HCI_ERR_UNKNOWN_CMD;
+		evt = cmd_status(BT_HCI_ERR_UNKNOWN_CMD);
 	}
 
 	return evt;

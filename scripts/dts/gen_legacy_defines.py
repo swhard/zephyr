@@ -270,7 +270,7 @@ def write_bus(node):
         err(f"missing 'label' property on bus node {node.bus_node!r}")
 
     # #define DT_<DEV-IDENT>_BUS_NAME <BUS-LABEL>
-    out_node_s(node, "BUS_NAME", str2ident(node.bus_node.label))
+    out_node_s(node, "BUS_NAME", str2ident(node.bus_node.label), "Macro is deprecated")
 
     for compat in node.compats:
         # #define DT_<COMPAT>_BUS_<BUS-TYPE> 1
@@ -744,9 +744,16 @@ def out(ident, val, aliases=(), deprecation_msg=None):
     out_define(ident, val, deprecation_msg, header_file)
     primary_ident = f"DT_{ident}"
 
+    d_msg = deprecation_msg
+
     for alias in aliases:
         if alias != ident:
+            if alias.startswith("INST_"):
+                deprecation_msg = "Macro is deprecated"
+
             out_define(alias, "DT_" + ident, deprecation_msg, header_file)
+
+            deprecation_msg = d_msg
 
     return primary_ident
 
