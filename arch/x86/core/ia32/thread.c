@@ -69,9 +69,8 @@ void arch_new_thread(struct k_thread *thread, k_thread_stack_t *stack,
 	void *swap_entry;
 	struct _x86_initial_frame *initial_frame;
 
-	Z_ASSERT_VALID_PRIO(priority, entry);
 	stack_buf = Z_THREAD_STACK_BUFFER(stack);
-	z_new_thread_init(thread, stack_buf, stack_size, priority, options);
+	z_new_thread_init(thread, stack_buf, stack_size);
 
 #if CONFIG_X86_STACK_PROTECTION
 	struct z_x86_thread_stack_header *header =
@@ -89,7 +88,7 @@ void arch_new_thread(struct k_thread *thread, k_thread_stack_t *stack,
 	swap_entry = z_thread_entry;
 #endif
 
-	stack_high = (char *)STACK_ROUND_DOWN(stack_buf + stack_size);
+	stack_high = (char *)Z_STACK_PTR_ALIGN(stack_buf + stack_size);
 
 	/* Create an initial context on the stack expected by z_swap() */
 	initial_frame = (struct _x86_initial_frame *)
