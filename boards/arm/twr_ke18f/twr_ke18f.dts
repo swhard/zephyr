@@ -162,10 +162,14 @@
 
 &ftm0 {
 	status = "okay";
+	compatible = "nxp,kinetis-ftm-pwm";
+	#pwm-cells = <3>;
 };
 
 &ftm3 {
 	status = "okay";
+	compatible = "nxp,kinetis-ftm-pwm";
+	#pwm-cells = <3>;
 };
 
 &lpi2c0 {
@@ -188,6 +192,10 @@
 };
 
 &lpspi1 {
+	status = "okay";
+};
+
+&dac0 {
 	status = "okay";
 };
 

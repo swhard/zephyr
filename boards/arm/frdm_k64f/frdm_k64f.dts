@@ -108,6 +108,11 @@ arduino_serial: &uart3 {
 	status = "okay";
 };
 
+&dac0 {
+	status = "okay";
+	voltage-reference = <2>;
+};
+
 arduino_i2c: &i2c0 {
 	status = "okay";
 
@@ -126,6 +131,8 @@ arduino_spi: &spi0 {
 
 &ftm3 {
 	status = "okay";
+	compatible = "nxp,kinetis-ftm-pwm";
+	#pwm-cells = <3>;
 };
 
 &uart0 {
