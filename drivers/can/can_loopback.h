@@ -11,7 +11,7 @@
 #include <drivers/can.h>
 
 #define DEV_DATA(dev) ((struct can_loopback_data *const)(dev)->driver_data)
-#define DEV_CFG(dev) \
+#define DEV_CFG(dev)                                                           \
 	((const struct can_loopback_config *const)(dev)->config_info)
 
 struct can_loopback_filter {
@@ -24,6 +24,7 @@ struct can_loopback_data {
 	struct can_loopback_filter filters[CONFIG_CAN_MAX_FILTER];
 	struct k_mutex mtx;
 	bool loopback;
+	int id;
 };
 
 struct can_loopback_config {
