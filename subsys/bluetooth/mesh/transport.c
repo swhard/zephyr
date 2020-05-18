@@ -85,11 +85,13 @@ static struct seg_tx {
 				 ctl:1,
 				 aszmic:1,
 				 friend_cred:1;
-	u8_t                     seg_o:5,
+	u8_t                     seg_o:6,       /* Segment being sent. 6 bits to
+						 * prevent overflow in loop.
+						 */
 				 started:1,     /* Start cb called */
-				 sending:1,     /* Sending is in progress */
+				 sending:1;     /* Sending is in progress */
+	u8_t                     nack_count:5,  /* Number of unacked segs */
 				 blocked:1;     /* Blocked by ongoing tx */
-	u8_t                     nack_count;    /* Number of unacked segs */
 	u8_t                     ttl;
 	u8_t                     seg_pending:5, /* Number of segments pending */
 				 attempts:3;
@@ -425,6 +427,7 @@ static void seg_tx_send_unacked(struct seg_tx *tx)
 	}
 
 	tx->seg_o = 0U;
+	tx->attempts--;
 
 end:
 	if (!tx->seg_pending) {
@@ -433,7 +436,6 @@ end:
 	}
 
 	tx->sending = 0U;
-	tx->attempts--;
 }
 
 static void seg_retransmit(struct k_work *work)
@@ -911,9 +913,11 @@ static int sdu_recv_unseg(struct bt_mesh_net_rx *rx, u8_t hdr,
 		return 0;
 	}
 
-	BT_WARN("No matching AppKey");
+	if (rx->local_match) {
+		BT_WARN("No matching AppKey");
+	}
 
-	return -EINVAL;
+	return 0;
 }
 
 static int sdu_recv_seg(struct seg_rx *seg, u8_t hdr, u8_t aszmic,
@@ -1005,9 +1009,11 @@ static int sdu_recv_seg(struct seg_rx *seg, u8_t hdr, u8_t aszmic,
 		return 0;
 	}
 
-	BT_WARN("No matching AppKey");
+	if (rx->local_match) {
+		BT_WARN("No matching AppKey");
+	}
 
-	return -EINVAL;
+	return 0;
 }
 
 static struct seg_tx *seg_tx_lookup(u16_t seq_zero, u8_t obo, u16_t addr)
