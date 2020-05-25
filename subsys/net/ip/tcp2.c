@@ -31,8 +31,6 @@ static K_MEM_SLAB_DEFINE(tcp_conns_slab, sizeof(struct tcp),
 				CONFIG_NET_MAX_CONTEXTS, 4);
 
 static void tcp_in(struct tcp *conn, struct net_pkt *pkt);
-static size_t tcp_data_len(struct net_pkt *pkt);
-int net_tcp_finalize(struct net_pkt *pkt);
 
 int (*tcp_send_cb)(struct net_pkt *pkt) = NULL;
 size_t (*tcp_recv_cb)(struct tcp *conn, struct net_pkt *pkt) = NULL;
@@ -144,6 +142,16 @@ static const char *tcp_flags(u8_t flags)
 	return buf;
 }
 
+static size_t tcp_data_len(struct net_pkt *pkt)
+{
+	struct tcphdr *th = th_get(pkt);
+	size_t tcp_options_len = (th->th_off - 5) * 4;
+	ssize_t len = net_pkt_get_len(pkt) - net_pkt_ip_hdr_len(pkt) -
+		net_pkt_ip_opts_len(pkt) - sizeof(*th) - tcp_options_len;
+
+	return len > 0 ? len : 0;
+}
+
 static const char *tcp_th(struct net_pkt *pkt)
 {
 #define BUF_SIZE 80
@@ -241,6 +249,11 @@ static int tcp_conn_unref(struct tcp *conn)
 
 	tcp_send_queue_flush(conn);
 
+	if (k_delayed_work_remaining_get(&conn->send_data_timer)) {
+		k_delayed_work_cancel(&conn->send_data_timer);
+	}
+	tcp_pkt_unref(conn->send_data);
+
 	k_delayed_work_cancel(&conn->timewait_timer);
 
 	memset(conn, 0, sizeof(*conn));
@@ -291,6 +304,12 @@ static void tcp_send_process(struct k_work *work)
 
 		pkt = forget ? tcp_slist(&conn->send_queue, get, struct net_pkt,
 						next) : tcp_pkt_clone(pkt);
+		if (!pkt) {
+			NET_ERR("net_pkt alloc failure");
+			tcp_conn_unref(conn);
+			return;
+		}
+
 		tcp_send(pkt);
 
 		if (forget == false && !k_delayed_work_remaining_get(
@@ -419,8 +438,9 @@ static bool tcp_options_check(struct tcp_options *recv_options,
 				goto end;
 			}
 
-			recv_options->mss = opt;
+			recv_options->mss = ntohs(*((u16_t *)(options + 2)));
 			recv_options->mss_found = true;
+			NET_DBG("MSS=%hu", recv_options->mss);
 			break;
 		case TCPOPT_WINDOW:
 			if (opt_len != 3) {
@@ -443,16 +463,6 @@ end:
 	return result;
 }
 
-static size_t tcp_data_len(struct net_pkt *pkt)
-{
-	struct tcphdr *th = th_get(pkt);
-	size_t tcp_options_len = (th->th_off - 5) * 4;
-	ssize_t len = net_pkt_get_len(pkt) - net_pkt_ip_hdr_len(pkt) -
-		net_pkt_ip_opts_len(pkt) - sizeof(*th) - tcp_options_len;
-
-	return len > 0 ? len : 0;
-}
-
 static size_t tcp_data_get(struct tcp *conn, struct net_pkt *pkt)
 {
 	ssize_t len = tcp_data_len(pkt);
@@ -464,7 +474,13 @@ static size_t tcp_data_get(struct tcp *conn, struct net_pkt *pkt)
 
 	if (len > 0) {
 		if (conn->context->recv_cb) {
-			struct net_pkt *up = net_pkt_clone(pkt, K_NO_WAIT);
+			struct net_pkt *up =
+				net_pkt_clone(pkt, TCP_PKT_ALLOC_TIMEOUT);
+
+			if (!up) {
+				len = -ENOBUFS;
+				goto out;
+			}
 
 			net_pkt_cursor_init(up);
 			net_pkt_set_overwrite(up, true);
@@ -495,7 +511,8 @@ static int tcp_finalize_pkt(struct net_pkt *pkt)
 	return -EINVAL;
 }
 
-static int tcp_header_add(struct tcp *conn, struct net_pkt *pkt, u8_t flags)
+static int tcp_header_add(struct tcp *conn, struct net_pkt *pkt, u8_t flags,
+			  u32_t seq)
 {
 	NET_PKT_DATA_ACCESS_DEFINE(tcp_access, struct tcphdr);
 	struct tcphdr *th;
@@ -512,8 +529,8 @@ static int tcp_header_add(struct tcp *conn, struct net_pkt *pkt, u8_t flags)
 
 	th->th_off = 5;
 	th->th_flags = flags;
-	th->th_win = htons(conn->win);
-	th->th_seq = htonl(conn->seq);
+	th->th_win = htons(conn->recv_win);
+	th->th_seq = htonl(seq);
 
 	if (ACK & flags) {
 		th->th_ack = htonl(conn->ack);
@@ -539,49 +556,40 @@ static int ip_header_add(struct tcp *conn, struct net_pkt *pkt)
 	return -EINVAL;
 }
 
-static void tcp_out(struct tcp *conn, u8_t flags, ...)
+static void tcp_out_ext(struct tcp *conn, u8_t flags, struct net_pkt *data,
+			u32_t seq)
 {
 	struct net_pkt *pkt;
-	size_t len = 0;
-	int r;
+	int ret;
 
 	pkt = tcp_pkt_alloc(conn, sizeof(struct tcphdr));
 	if (!pkt) {
-		goto fail;
+		goto out;
 	}
 
-	if (PSH & flags) {
-		struct net_pkt *data_pkt;
-		va_list ap;
-		va_start(ap, flags);
-		data_pkt = va_arg(ap, struct net_pkt *);
-		va_end(ap);
-
-		len = net_pkt_get_len(data_pkt);
-		/* Append the data buffer to pkt */
-		net_pkt_append_buffer(pkt, data_pkt->buffer);
-
-		data_pkt->buffer = NULL;
-		tcp_pkt_unref(data_pkt);
+	if (data) {
+		/* Append the data buffer to the pkt */
+		net_pkt_append_buffer(pkt, data->buffer);
+		data->buffer = NULL;
+		tcp_pkt_unref(data);
 	}
 
-	r = ip_header_add(conn, pkt);
-	if (r < 0) {
-		goto fail;
+	ret = ip_header_add(conn, pkt);
+	if (ret < 0) {
+		tcp_pkt_unref(pkt);
+		goto out;
 	}
 
-	r = tcp_header_add(conn, pkt, flags);
-	if (r < 0) {
-		goto fail;
+	ret = tcp_header_add(conn, pkt, flags, seq);
+	if (ret < 0) {
+		tcp_pkt_unref(pkt);
+		goto out;
 	}
 
-	r = tcp_finalize_pkt(pkt);
-	if (r < 0) {
-		goto fail;
-	}
-
-	if (len) {
-		conn_seq(conn, + len);
+	ret = tcp_finalize_pkt(pkt);
+	if (ret < 0) {
+		tcp_pkt_unref(pkt);
+		goto out;
 	}
 
 	NET_DBG("%s", log_strdup(tcp_th(pkt)));
@@ -596,10 +604,163 @@ static void tcp_out(struct tcp *conn, u8_t flags, ...)
 	tcp_send_process((struct k_work *)&conn->send_timer);
 out:
 	return;
+}
 
-fail:
-	if (pkt) {
-		tcp_pkt_unref(pkt);
+static void tcp_out(struct tcp *conn, u8_t flags)
+{
+	tcp_out_ext(conn, flags, NULL /* no data */, conn->seq);
+}
+
+static int tcp_pkt_pull(struct net_pkt *pkt, size_t len)
+{
+	int total = net_pkt_get_len(pkt);
+	int ret = 0;
+
+	if (len > total) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	net_pkt_cursor_init(pkt);
+	net_pkt_set_overwrite(pkt, true);
+	net_pkt_pull(pkt, len);
+	net_pkt_trim_buffer(pkt);
+ out:
+	return ret;
+}
+
+static void tcp_pkt_peek(struct net_pkt *to, struct net_pkt *from, size_t pos,
+			 size_t len)
+{
+	net_pkt_cursor_init(to);
+	net_pkt_cursor_init(from);
+
+	if (pos) {
+		net_pkt_set_overwrite(from, true);
+		net_pkt_skip(from, pos);
+	}
+
+	net_pkt_copy(to, from, len);
+}
+
+static bool tcp_window_full(struct tcp *conn)
+{
+	bool window_full = !(conn->unacked_len < conn->send_win);
+
+	NET_DBG("conn: %p window_full=%hu", conn, window_full);
+
+	return window_full;
+}
+
+static int tcp_unsent_len(struct tcp *conn)
+{
+	int unsent_len;
+
+	if (conn->unacked_len > conn->send_data_total) {
+		NET_ERR("total=%zu, unacked_len=%d",
+			conn->send_data_total, conn->unacked_len);
+		unsent_len = -ERANGE;
+		goto out;
+	}
+
+	unsent_len = conn->send_data_total - conn->unacked_len;
+ out:
+	NET_DBG("unsent_len=%d", unsent_len);
+
+	return unsent_len;
+}
+
+static int tcp_send_data(struct tcp *conn)
+{
+	int ret = 0;
+	int pos, len;
+	struct net_pkt *pkt;
+
+	pos = conn->unacked_len;
+	len = MIN3(conn->send_data_total - conn->unacked_len,
+		   conn->send_win - conn->unacked_len,
+		   conn_mss(conn));
+
+	pkt = tcp_pkt_alloc(conn, len);
+	if (!pkt) {
+		NET_ERR("conn: %p packet allocation failed, len=%d", conn, len);
+		ret = -ENOBUFS;
+		goto out;
+	}
+
+	tcp_pkt_peek(pkt, conn->send_data, pos, len);
+
+	tcp_out_ext(conn, PSH | ACK, pkt, conn->seq + conn->unacked_len);
+
+	conn->unacked_len += len;
+ out:
+	conn_send_data_dump(conn);
+
+	return ret;
+}
+
+/* Send all queued but unsent data from the send_data packet by packet
+ * until the receiver's window is full. */
+static int tcp_send_queued_data(struct tcp *conn)
+{
+	int ret = 0;
+	bool subscribe = false;
+
+	if (conn->data_mode == TCP_DATA_MODE_RESEND) {
+		goto out;
+	}
+
+	while (tcp_unsent_len(conn) > 0) {
+
+		if (tcp_window_full(conn)) {
+			subscribe = true;
+			break;
+		}
+
+		ret = tcp_send_data(conn);
+		if (ret < 0) {
+			break;
+		}
+	}
+
+	if (conn->unacked_len) {
+		subscribe = true;
+	}
+
+	if (k_delayed_work_remaining_get(&conn->send_data_timer)) {
+		subscribe = false;
+	}
+
+	if (subscribe) {
+		conn->send_data_retries = 0;
+		k_delayed_work_submit(&conn->send_data_timer, K_MSEC(tcp_rto));
+	}
+ out:
+	return ret;
+}
+
+static void tcp_resend_data(struct k_work *work)
+{
+	struct tcp *conn = CONTAINER_OF(work, struct tcp, send_data_timer);
+	bool conn_unref = false;
+
+	NET_DBG("send_data_retries=%hu", conn->send_data_retries);
+
+	if (conn->send_data_retries >= tcp_retries) {
+		NET_DBG("conn: %p close, data retransmissions exceeded", conn);
+		conn_unref = true;
+		goto out;
+	}
+
+	conn->data_mode = TCP_DATA_MODE_RESEND;
+	conn->unacked_len = 0;
+	tcp_send_data(conn);
+
+	conn->send_data_retries++;
+	k_delayed_work_submit(&conn->send_data_timer, K_MSEC(tcp_rto));
+ out:
+	if (conn_unref) {
+		tcp_conn_unref(conn);
 	}
 }
 
@@ -635,13 +796,19 @@ static struct tcp *tcp_conn_alloc(void)
 
 	conn->state = TCP_LISTEN;
 
-	conn->win = tcp_window;
+	conn->recv_win = tcp_window;
+
+	conn->seq = (IS_ENABLED(CONFIG_NET_TEST_PROTOCOL) ||
+		     IS_ENABLED(CONFIG_NET_TEST)) ? 0 : sys_rand32_get();
 
 	sys_slist_init(&conn->send_queue);
 
 	k_delayed_work_init(&conn->send_timer, tcp_send_process);
 
 	k_delayed_work_init(&conn->timewait_timer, tcp_timewait_timeout);
+
+	conn->send_data = tcp_pkt_alloc(conn, 0);
+	k_delayed_work_init(&conn->send_data_timer, tcp_resend_data);
 
 	tcp_conn_ref(conn);
 
@@ -858,6 +1025,10 @@ static void tcp_in(struct tcp *conn, struct net_pkt *pkt)
 		goto next_state;
 	}
 
+	if (th) {
+		conn->send_win = ntohs(th->th_win);
+	}
+
 	if (FL(&fl, &, RST)) {
 		conn_state(conn, TCP_CLOSED);
 	}
@@ -885,7 +1056,9 @@ next_state:
 			net_context_set_state(conn->context,
 					      NET_CONTEXT_CONNECTED);
 			if (len) {
-				tcp_data_get(conn, pkt);
+				if (tcp_data_get(conn, pkt) < 0) {
+					break;
+				}
 				conn_ack(conn, + len);
 				tcp_out(conn, ACK);
 			}
@@ -902,7 +1075,9 @@ next_state:
 			net_context_set_state(conn->context,
 					      NET_CONTEXT_CONNECTED);
 			if (FL(&fl, &, PSH)) {
-				tcp_data_get(conn, pkt);
+				if (tcp_data_get(conn, pkt) < 0) {
+					break;
+				}
 			}
 			if (FL(&fl, &, SYN)) {
 				conn_ack(conn, th_seq(th) + 1);
@@ -924,12 +1099,57 @@ next_state:
 			break;
 		}
 
+		if (th && net_tcp_seq_cmp(th_ack(th), conn->seq) > 0) {
+			u32_t len_acked = th_ack(th) - conn->seq;
+
+			NET_DBG("conn: %p len_acked=%u", conn, len_acked);
+
+			if ((conn->send_data_total < len_acked) ||
+					(tcp_pkt_pull(conn->send_data,
+						      len_acked) < 0)) {
+				NET_ERR("conn: %p, Invalid len_acked=%u "
+					"(total=%zu)", conn, len_acked,
+					conn->send_data_total);
+				tcp_out(conn, RST);
+				conn_state(conn, TCP_CLOSED);
+				break;
+			}
+
+			conn->send_data_total -= len_acked;
+			conn->unacked_len -= len_acked;
+			conn_seq(conn, + len_acked);
+
+			conn_send_data_dump(conn);
+
+			if (!k_delayed_work_remaining_get(&conn->send_data_timer)) {
+				NET_ERR("conn: %p, Missing a subscription "
+					"of the send_data queue timer", conn);
+				tcp_out(conn, RST);
+				conn_state(conn, TCP_CLOSED);
+				break;
+			}
+			conn->send_data_retries = 0;
+			k_delayed_work_cancel(&conn->send_data_timer);
+			if (conn->data_mode == TCP_DATA_MODE_RESEND) {
+				conn->unacked_len = 0;
+			}
+			conn->data_mode = TCP_DATA_MODE_SEND;
+
+			if (tcp_send_queued_data(conn) < 0) {
+				tcp_out(conn, RST);
+				conn_state(conn, TCP_CLOSED);
+				break;
+			}
+		}
+
 		if (len) {
 			if (th_seq(th) == conn->ack) {
-				tcp_data_get(conn, pkt);
+				if (tcp_data_get(conn, pkt) < 0) {
+					break;
+				}
 				conn_ack(conn, + len);
 				tcp_out(conn, ACK);
-			} else if (th_seq(th) < conn->ack) {
+			} else if (net_tcp_seq_greater(conn->ack, th_seq(th))) {
 				tcp_out(conn, ACK); /* peer has resent */
 			}
 		}
@@ -1035,21 +1255,38 @@ int net_tcp_update_recv_wnd(struct net_context *context, s32_t delta)
 	return -EPROTONOSUPPORT;
 }
 
-/* net context wants to queue data for the TCP connection */
+/* net_context queues the outgoing data for the TCP connection */
 int net_tcp_queue_data(struct net_context *context, struct net_pkt *pkt)
 {
 	struct tcp *conn = context->tcp;
 	int ret = 0;
-
-	NET_DBG("conn: %p, len: %zu", conn, net_pkt_get_len(pkt));
+	size_t len;
 
 	if (!conn || conn->state != TCP_ESTABLISHED) {
 		ret = -ENOTCONN;
 		goto out;
 	}
 
-	tcp_out(conn, PSH | ACK, pkt);
-out:
+	k_mutex_lock(&conn->lock, K_FOREVER);
+
+	len = net_pkt_get_len(pkt);
+
+	net_pkt_append_buffer(conn->send_data, pkt->buffer);
+	conn->send_data_total += len;
+	NET_DBG("conn: %p Queued %zu bytes (total %zu)", conn, len,
+		conn->send_data_total);
+	pkt->buffer = NULL;
+	tcp_pkt_unref(pkt);
+
+	ret = tcp_send_queued_data(conn);
+	if (ret < 0) {
+		k_mutex_unlock(&conn->lock);
+		tcp_conn_unref(conn);
+		goto out;
+	}
+
+	k_mutex_unlock(&conn->lock);
+ out:
 	return ret;
 }
 

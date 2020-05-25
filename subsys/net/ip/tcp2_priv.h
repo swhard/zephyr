@@ -8,6 +8,10 @@
 
 #define is(_a, _b) (strcmp((_a), (_b)) == 0)
 
+#ifndef MIN3
+#define MIN3(_a, _b, _c) MIN((_a), MIN((_b), (_c)))
+#endif
+
 #define th_seq(_x) ntohl((_x)->th_seq)
 #define th_ack(_x) ntohl((_x)->th_ack)
 
@@ -32,32 +36,38 @@
 #define tcp_free(_ptr) k_free(_ptr)
 #endif
 
-#if IS_ENABLED(CONFIG_NET_TEST_PROTOCOL)
+#define TCP_PKT_ALLOC_TIMEOUT K_MSEC(100)
+
+#if defined(CONFIG_NET_TEST_PROTOCOL)
+#define tcp_pkt_clone(_pkt) tp_pkt_clone(_pkt, tp_basename(__FILE__), __LINE__)
+#define tcp_pkt_unref(_pkt) tp_pkt_unref(_pkt, tp_basename(__FILE__), __LINE__)
+#else
+#define tcp_pkt_clone(_pkt) net_pkt_clone(_pkt, TCP_PKT_ALLOC_TIMEOUT)
+#define tcp_pkt_unref(_pkt) net_pkt_unref(_pkt)
+#define tp_pkt_alloc(args...)
+#endif
+
+#define tcp_pkt_ref(_pkt) net_pkt_ref(_pkt)
 #define tcp_pkt_alloc(_conn, _len)					\
 ({									\
-	sa_family_t _family = net_context_get_family((_conn)->context);	\
-	struct net_pkt *_pkt = net_pkt_alloc_with_buffer((_conn)->iface,\
-							 (_len),	\
-							 _family,	\
-							 IPPROTO_TCP,	\
-							 K_NO_WAIT);	\
+	struct net_pkt *_pkt;						\
+									\
+	if ((_len) > 0) {						\
+		_pkt = net_pkt_alloc_with_buffer(			\
+			(_conn)->iface,					\
+			(_len),						\
+			net_context_get_family((_conn)->context),	\
+			IPPROTO_TCP,					\
+			TCP_PKT_ALLOC_TIMEOUT);				\
+	} else {							\
+		_pkt = net_pkt_alloc(TCP_PKT_ALLOC_TIMEOUT);		\
+	}								\
 									\
 	tp_pkt_alloc(_pkt, tp_basename(__FILE__), __LINE__);		\
 									\
 	_pkt;								\
 })
-#define tcp_pkt_clone(_pkt) tp_pkt_clone(_pkt, tp_basename(__FILE__), __LINE__)
-#define tcp_pkt_unref(_pkt) tp_pkt_unref(_pkt, tp_basename(__FILE__), __LINE__)
-#else
-#define tcp_pkt_alloc(_conn, _len)					\
-	net_pkt_alloc_with_buffer((_conn)->iface, (_len),		\
-				  net_context_get_family((_conn)->context), \
-				  IPPROTO_TCP, K_NO_WAIT)
 
-#define tcp_pkt_clone(_pkt) net_pkt_clone(_pkt, K_NO_WAIT)
-#define tcp_pkt_unref(_pkt) net_pkt_unref(_pkt)
-#endif
-#define tcp_pkt_ref(_pkt) net_pkt_ref(_pkt)
 
 #if IS_ENABLED(CONFIG_NET_TEST_PROTOCOL)
 #define conn_seq(_conn, _req) \
@@ -71,12 +81,29 @@
 #define conn_ack(_conn, _req) (_conn)->ack += (_req)
 #endif
 
+#define conn_mss(_conn)					\
+	((_conn)->recv_options.mss_found ?		\
+	 (_conn)->recv_options.mss : NET_IPV6_MTU)
+
 #define conn_state(_conn, _s)						\
 ({									\
 	NET_DBG("%s->%s",						\
 		tcp_state_to_str((_conn)->state, false),		\
 		tcp_state_to_str((_s), false));				\
 	(_conn)->state = _s;						\
+})
+
+#define conn_send_data_dump(_conn)					\
+({									\
+	NET_DBG("conn: %p total=%zd, unacked_len=%d, "			\
+		"send_win=%hu, mss=%hu",				\
+		(_conn), net_pkt_get_len((_conn)->send_data),		\
+		conn->unacked_len, conn->send_win,			\
+		conn_mss((_conn)));					\
+	NET_DBG("conn: %p send_data_timer=%hu, send_data_retries=%hu",	\
+		(_conn),						\
+		(bool)k_delayed_work_remaining_get(&(_conn)->send_data_timer),\
+		(_conn)->send_data_retries);				\
 })
 
 #define TCPOPT_END	0
@@ -131,6 +158,11 @@ enum tcp_state {
 	TCP_CLOSED
 };
 
+enum tcp_data_mode {
+	TCP_DATA_MODE_SEND = 0,
+	TCP_DATA_MODE_RESEND = 1
+};
+
 union tcp_endpoint {
 	struct sockaddr sa;
 	struct sockaddr_in sin;
@@ -154,10 +186,17 @@ struct tcp { /* TCP connection */
 	u32_t ack;
 	union tcp_endpoint src;
 	union tcp_endpoint dst;
-	u16_t win;
+	u16_t recv_win;
+	u16_t send_win;
 	struct tcp_options recv_options;
 	struct k_delayed_work send_timer;
 	sys_slist_t send_queue;
+	struct k_delayed_work send_data_timer;
+	struct net_pkt *send_data;
+	size_t send_data_total;
+	u8_t send_data_retries;
+	int unacked_len;
+	enum tcp_data_mode data_mode;
 	bool in_retransmission;
 	size_t send_retries;
 	struct k_delayed_work timewait_timer;
