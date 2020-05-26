@@ -131,14 +131,6 @@ def error(text):
     sys.exit("%s ERROR: %s" % (scr, text))
 
 def debug_die(die, text):
-    if 'DW_AT_decl_file' not in die.attributes:
-        abs_orig_val = die.attributes["DW_AT_abstract_origin"].value
-        offset = abs_orig_val + die.cu.cu_offset
-        for var in variables:
-            if var.offset == offset:
-                die = var
-                break
-
     lp_header = die.dwarfinfo.line_program_for_CU(die.cu).header
     files = lp_header["file_entry"]
     includes = lp_header["include_directory"]
@@ -167,7 +159,6 @@ stack_counter = 0
 # Global type environment. Populated by pass 1.
 type_env = {}
 extern_env = {}
-variables = []
 
 class KobjectInstance:
     def __init__(self, type_obj, addr):
@@ -514,6 +505,8 @@ def find_kobjects(elf, syms):
 
     di = elf.get_dwarf_info()
 
+    variables = []
+
     # Step 1: collect all type information.
     for CU in di.iter_CUs():
         for die in CU.iter_DIEs():
@@ -618,8 +611,8 @@ def find_kobjects(elf, syms):
 
         _, user_ram_allowed = kobjects[ko.type_obj.name]
         if not user_ram_allowed and app_smem_start <= addr < app_smem_end:
-            debug_die(die, "object '%s' found in invalid location %s"
-                      % (name, hex(addr)))
+            debug("object '%s' found in invalid location %s"
+                  % (ko.type_obj.name, hex(addr)))
             continue
 
         if ko.type_obj.name != "device":
