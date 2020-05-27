@@ -104,7 +104,7 @@ a node identifier and pass it to ``DT_LABEL`` to get the right string to pass
 to ``device_get_binding()``.
 
 If you're having trouble, see :ref:`dt-trouble`. The first thing to check is
-that the node is has ``status = "okay"`` and has a matching binding, like this:
+that the node has ``status = "okay"``, like this:
 
 .. code-block:: c
 
@@ -113,11 +113,13 @@ that the node is has ``status = "okay"`` and has a matching binding, like this:
    #if DT_NODE_HAS_STATUS(MY_SERIAL, okay)
    struct device *uart_dev = device_get_binding(DT_LABEL(MY_SERIAL));
    #else
-   #error "Node is disabled, has no matching binding, or initialization failed"
+   #error "Node is disabled"
    #endif
 
-If you see the ``#error`` output, either something is wrong with either your
-devicetree or bindings, or the device's initialization function failed.
+If you see the ``#error`` output, make sure to enable the node in your
+devicetree. If you don't see the ``#error`` but ``uart_dev`` is NULL, then
+there's likely either a Kconfig issue preventing the device driver from
+creating the device, or the device's initialization function failed.
 
 .. _dts-find-binding:
 
@@ -168,9 +170,9 @@ Set devicetree overlays
 ***********************
 
 Devicetree overlays are explained in :ref:`devicetree-intro`. The CMake
-variable :makevar:`DTC_OVERLAY_FILE` contains a space- or colon-separated list
-of overlays. If :makevar:`DTC_OVERLAY_FILE` specifies multiple files, they are
-included in that order by the C preprocessor.
+variable :makevar:`DTC_OVERLAY_FILE` contains a space- or semicolon-separated
+list of overlays. If :makevar:`DTC_OVERLAY_FILE` specifies multiple files, they
+are included in that order by the C preprocessor.
 
 Here are some ways to set it:
 
@@ -664,7 +666,7 @@ If you see the "whoops" error message when you rebuild, the node identifier
 isn't referring to a valid node. :ref:`get-devicetree-outputs` and debug from
 there.
 
-Some hints:
+Some hints for what to check next if you don't see the "whoops" error message:
 
 - did you :ref:`dt-use-the-right-names`?
 - does the :ref:`property exist <dt-checking-property-exists>`?
@@ -676,7 +678,7 @@ Check for missing bindings
 ==========================
 
 If the build fails to :ref:`dts-find-binding` for a node, then either the
-node's ``compatible`` property is missing, or its value has no matching
+node's ``compatible`` property is not defined, or its value has no matching
 binding. If the property is set, check for typos in its name. In a devicetree
 source file, ``compatible`` should look like ``"vnd,some-device"`` --
 :ref:`dt-use-the-right-names`.
