@@ -36,6 +36,7 @@
 static u32_t accumulated_lptim_cnt;
 
 static struct k_spinlock lock;
+volatile u8_t  lptim_fired;
 
 static void lptim_irq_handler(struct device *unused)
 {
@@ -47,37 +48,33 @@ static void lptim_irq_handler(struct device *unused)
 
 		k_spinlock_key_t key = k_spin_lock(&lock);
 
-		/* LPTIM1 CNT register is already reset after one autoreload */
-		volatile u32_t lp_time = LL_LPTIM_GetCounter(LPTIM1);
-
-		/* It should be noted that to read reliably the content
-		 * of the LPTIM_CNT register, two successive read accesses
-		 * must be performed and compared
-		 */
-
-		while (lp_time != LL_LPTIM_GetCounter(LPTIM1)) {
-			lp_time = LL_LPTIM_GetCounter(LPTIM1);
-		}
-		lp_time += LL_LPTIM_GetAutoReload(LPTIM1) + 1;
-
 		/* do not change ARR yet, z_clock_announce will do */
 		LL_LPTIM_ClearFLAG_ARRM(LPTIM1);
 
-		/* increase the total nb of lptim count
+		if (lptim_fired) {
+			lptim_fired = 0;
+#if defined(LPTIM_CR_COUNTRST)
+			LL_LPTIM_ResetCounter(LPTIM1);
+#endif
+		}
+
+		/* increase the total nb of autoreload count
 		 * used in the z_timer_cycle_get_32() function.
 		 * Reading the CNT register gives a reliable value
 		 */
-		accumulated_lptim_cnt += lp_time;
+		u32_t autoreload = LL_LPTIM_GetAutoReload(LPTIM1) + 1;
+
+		accumulated_lptim_cnt += autoreload;
 
 		k_spin_unlock(&lock, key);
 
 		/* announce the elapsed time in ms (count register is 16bit) */
-		u32_t dticks = (lp_time
+		u32_t dticks = (autoreload
 				* CONFIG_SYS_CLOCK_TICKS_PER_SEC)
 				/ LPTIM_CLOCK;
 
 		z_clock_announce(IS_ENABLED(CONFIG_TICKLESS_KERNEL)
-				? dticks : 1);
+				? dticks : (dticks > 0));
 	}
 }
 
@@ -110,8 +107,6 @@ int z_clock_driver_init(struct device *device)
 #endif /* LL_APB1_GRP1_PERIPH_PWR */
 	/* enable backup domain */
 	LL_PWR_EnableBkUpAccess();
-	LL_RCC_ForceBackupDomainReset();
-	LL_RCC_ReleaseBackupDomainReset();
 
 	/* enable LSE clock */
 	LL_RCC_LSE_DisableBypass();
@@ -152,6 +147,7 @@ int z_clock_driver_init(struct device *device)
 	LL_LPTIM_ClearFlag_ARROK(LPTIM1);
 
 	accumulated_lptim_cnt = 0;
+	lptim_fired = 0;
 
 	/* Enable the LPTIM1 counter */
 	LL_LPTIM_Enable(LPTIM1);
@@ -163,7 +159,7 @@ int z_clock_driver_init(struct device *device)
 
 	} else {
 		/* LPTIM1 is triggered on a Tick period */
-		LL_LPTIM_SetAutoReload(LPTIM1, COUNT_PER_TICK);
+		LL_LPTIM_SetAutoReload(LPTIM1, COUNT_PER_TICK - 1);
 	}
 
 	/* Start the LPTIM counter in continuous mode */
@@ -183,12 +179,15 @@ void z_clock_set_timeout(s32_t ticks, bool idle)
 
 	ARG_UNUSED(idle);
 
+	if (!IS_ENABLED(CONFIG_TICKLESS_KERNEL)) {
+		return;
+	}
+
 	/* ARROK bit validates previous write operation to ARR register */
 	while (LL_LPTIM_IsActiveFlag_ARROK(LPTIM1) == 0) {
 	}
 	LL_LPTIM_ClearFlag_ARROK(LPTIM1);
 
-#ifdef CONFIG_TICKLESS_KERNEL
 	if (ticks == K_TICKS_FOREVER) {
 		/* disable LPTIM */
 		LL_APB1_GRP1_ForceReset(LL_APB1_GRP1_PERIPH_LPTIM1);
@@ -201,17 +200,7 @@ void z_clock_set_timeout(s32_t ticks, bool idle)
 	 * treated identically: it simply indicates the kernel would like the
 	 * next tick announcement as soon as possible.
 	 */
-	if (ticks <= (s32_t)1) {
-		ticks = 1;
-	} else {
-		ticks = (ticks - 1);
-	}
-	/* maximise Tick to keep next_arr on 32bit values,
-	 * in anycase the ARR cannot exceed LPTIM_TIMEBASE
-	 */
-	if (ticks > (s32_t)0xFFFF) {
-		ticks = 0xFFFF;
-	}
+	ticks = MAX(MIN(ticks - 1, (s32_t)LPTIM_TIMEBASE), 1);
 
 	k_spinlock_key_t key = k_spin_lock(&lock);
 
@@ -237,18 +226,26 @@ void z_clock_set_timeout(s32_t ticks, bool idle)
 			/ (CONFIG_SYS_CLOCK_TICKS_PER_SEC);
 	/* add count unit from the expected nb of Ticks */
 	next_arr = next_arr + ((u32_t)(ticks) * LPTIM_CLOCK)
-			/ CONFIG_SYS_CLOCK_TICKS_PER_SEC + 1;
+			/ CONFIG_SYS_CLOCK_TICKS_PER_SEC - 1;
 
 	/* maximise to TIMEBASE */
 	if (next_arr > LPTIM_TIMEBASE) {
 		next_arr = LPTIM_TIMEBASE;
 	}
+
+	/* If we are close to the roll over of the ticker counter
+	 * change current tick so it can be compared with buffer.
+	 * If this event got outdated fire interrupt right now,
+	 * else schedule it normally.
+	 */
+	if (next_arr <= ((lp_time + 1) & LPTIM_TIMEBASE)) {
+		NVIC_SetPendingIRQ(LPTIM1_IRQn);
+		lptim_fired = 1;
+	}
 	/* run timer and wait for the reload match */
 	LL_LPTIM_SetAutoReload(LPTIM1, next_arr);
 
 	k_spin_unlock(&lock, key);
-
-#endif /* CONFIG_TICKLESS_KERNEL */
 }
 
 u32_t z_clock_elapsed(void)
@@ -270,15 +267,22 @@ u32_t z_clock_elapsed(void)
 		lp_time = LL_LPTIM_GetCounter(LPTIM1);
 	}
 
+	/* In case of counter roll-over, add this value,
+	 * even if the irq has not yet been handled
+	 */
+	if ((LL_LPTIM_IsActiveFlag_ARRM(LPTIM1) != 0)
+	  && LL_LPTIM_IsEnabledIT_ARRM(LPTIM1) != 0) {
+		lp_time += LL_LPTIM_GetAutoReload(LPTIM1) + 1;
+	}
+
 	k_spin_unlock(&lock, key);
 
 	/* gives the value of LPTIM1 counter (ms)
 	 * since the previous 'announce'
 	 */
-	u32_t ret = ((lp_time + 1) * 1000) / LPTIM_CLOCK;
+	u64_t ret = (lp_time * CONFIG_SYS_CLOCK_TICKS_PER_SEC) / LPTIM_CLOCK;
 
-	/* convert to ticks */
-	return z_ms_to_ticks(ret);
+	return (u32_t)(ret);
 }
 
 u32_t z_timer_cycle_get_32(void)
@@ -293,15 +297,25 @@ u32_t z_timer_cycle_get_32(void)
 	 * of the LPTIM_CNT register, two successive read accesses
 	 * must be performed and compared
 	 */
-
 	while (lp_time != LL_LPTIM_GetCounter(LPTIM1)) {
 		lp_time = LL_LPTIM_GetCounter(LPTIM1);
 	}
+
+	/* In case of counter roll-over, add this value,
+	 * even if the irq has not yet been handled
+	 */
+	if ((LL_LPTIM_IsActiveFlag_ARRM(LPTIM1) != 0)
+	  && LL_LPTIM_IsEnabledIT_ARRM(LPTIM1) != 0) {
+		lp_time += LL_LPTIM_GetAutoReload(LPTIM1) + 1;
+	}
+
 	lp_time += accumulated_lptim_cnt;
+
+	/* convert lptim count in a nb of hw cycles with precision */
+	u64_t ret = lp_time * (sys_clock_hw_cycles_per_sec() / LPTIM_CLOCK);
 
 	k_spin_unlock(&lock, key);
 
 	/* convert in hw cycles (keeping 32bit value) */
-	return ((lp_time / (LPTIM_CLOCK / 1000))
-		* (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC / 1000));
+	return (u32_t)(ret);
 }
