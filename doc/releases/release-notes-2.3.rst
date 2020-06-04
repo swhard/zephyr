@@ -56,6 +56,13 @@ API Changes
     big endian.
     The nordic driver byte swaps the entire 64 bit word to big endian.
 
+* I2C
+
+  * Added a new API for recovering an I2C bus from situations where the I2C
+    master and one or more I2C slaves are out of synchronization (e.g. if the
+    I2C master was reset in the middle of an I2C transaction or if a noise
+    pulse was induced on the SCL line).
+
 Deprecated in this release
 ==========================
 
@@ -244,187 +251,286 @@ Drivers and Sensors
 
 * ADC
 
-  * Add support for STM32G4, STM32L1 and STM32H7 series
-  * Enable internal voltage reference source on stm32
+  * Added support for STM32G4, STM32L1 and STM32H7 series
+  * Enabled internal voltage reference source on stm32
+  * Added Microchip MCP320x driver
+
+* Audio
+
+  * N/A
 
 * Bluetooth
 
-  * Add an RX thread on stm32wb hci wrapper
-  * Improve BLE support for rv32m1_vega:
+  * Added an RX thread on stm32wb hci wrapper
+  * Improved BLE support for rv32m1_vega:
 
-    - Add Resolvable Private Address support
-    - Enable power saving support
-    - Add 2 Mbps support
-    - Enable controller-based privacy
+    - Added Resolvable Private Address support
+    - Enabled power saving support
+    - Added 2 Mbps PHY support
+    - Enabled controller-based privacy
 
 * CAN
 
-  * <TBD>
+  * Converted can-primary alias to zephyr,can-primary chosen property
+  * Converted loopback driver to use a thread to send frames
 
 * Clock Control
 
-  * Enable MSI range config in PLL mode on stm32
-  * Fix AHB clock computation based on core on stm32h7
+  * Enabled MSI range config in PLL mode on stm32
+  * Fixed AHB clock computation based on core on stm32h7
 
 * Console
 
-  * <TBD>
+  * Fixed USB initialization
+  * Added semihosting console
 
 * Counter
 
-  * Add support on stm32h7 and stm32l0
-  * Fix alarm tick count on stm32
+  * Added support on stm32h7 and stm32l0
+  * Fixed alarm tick count on stm32
+  * Added Maxim DS3231 driver
+  * Added NXP Kinetis LPTMR driver
+
+* Crypto
+
+  * Added driver for nRF ECB
+  * Added CAP_NO_IV_PREFIX capability to stm32 driver
 
 * DAC
 
-  * Add stm32l0 series support
+  * Added stm32l0 series support
+  * Added DAC shell
+  * Added NXP Kinetis DAC and DAC32 drivers
+
+* Debug
+
+  * N/A
 
 * Display
 
-  * <TBD>
+  * Added power management support to st7789v driver
+  * Reworked controller memory initialization in ssd16xx driver
+  * Updated st7789v driver to set x-offset and y-offset properties properly
 
 * DMA
 
-  * Enable use of DMAMUX on stm32l4+ and stm32wb
+  * Enabled use of DMAMUX on stm32l4+ and stm32wb
   * Various fixes on stm32 dma management
 
 * EEPROM
 
-  * <TBD>
+  * N/A
 
 * Entropy
 
-  * <TBD>
+  * Removed Kconfig HAS_DTS_ENTROPY
+  * Implemented ISR specific get entropy call in gecko driver
+
+* ESPI
+
+  * Various fixes in Microchip driver
 
 * Ethernet
 
-  * Add SAM E54 max queue count referencing
-  * Add SAM0 family support to gmac driver
-  * Add sam4e support to queue in gmac
-  * Add network power management support to mcux
-  * Add VLAN support to enc28j60
-  * Add VLAN support to stm32
-  * Add Ethernet cable link status support to gmac
-  * Add support for i.MXRT1060 family to mcux
-  * Add support for getting manual MAC address from devicetree
-  * Add support for enabling random MAC address from devicetree
+  * Added SAM E54 max queue count referencing
+  * Added SAM0 family support to gmac driver
+  * Added sam4e support to queue in gmac
+  * Added network power management support to mcux
+  * Added VLAN support to enc28j60
+  * Added VLAN support to stm32
+  * Added Ethernet cable link status support to gmac
+  * Added support for i.MXRT1060 family to mcux
+  * Added support for getting manual MAC address from devicetree
+  * Added support for enabling random MAC address from devicetree
   * Various fixes to setup and cache handling in gmac
-  * Fix how unique MAC address is determined in mcux
-  * Fix Ethernet cable link detection in gecko
-  * Fix stm32 when receiving data during initialization
+  * Fixed how unique MAC address is determined in mcux
+  * Fixed Ethernet cable link detection in gecko
+  * Fixed stm32 when receiving data during initialization
 
 * Flash
 
-  * Add logs on stm32
-  * Fix wrong bank erasing on stm32g4
+  * Added logs on stm32
+  * Fixed wrong bank erasing on stm32g4
+  * Various fixes in nrf_qspi_nor driver
+  * Added driver for AT456 compatible SPI flash chips
+  * Enabled support for SAMV71
 
 * GPIO
 
-  * Add mcp23s17 driver
-  * Add STM32L5 support to stm32 driver
-  * Add interrupt support to sx1509b driver
-  * Fix interrupt handling in sifive, intel_apl, mchp_xec, mcux_igpio driver
+  * Added mcp23s17 driver
+  * Added STM32L5 support to stm32 driver
+  * Added interrupt support to sx1509b driver
+  * Fixed interrupt handling in sifive, intel_apl, mchp_xec, mcux_igpio driver
+  * Various fixes in intel_apl driver
+  * Added MCP23S17 driver
+  * Fixed port 1 interrupts in mcux lpc driver
 
 * Hardware Info
 
-  * <TBD>
+  * Fixed ESP32 implementation
+  * Updated byte order in all drivers
 
 * I2C
 
-  * Add support to stm32h7
+  * Added support to stm32h7
+  * Added write/read and bus recovery commands to shell
+  * Added bus recovery function to gpio bitbang driver
+  * Fixed fast and fast+ mode bus speeds in several drivers
+  * Added mcux flexcomm driver
 
 * I2S
 
-  * <TBD>
+  * Added I2S master DMA support and clock output to stm32 driver
+  * Enabled SAMV71
 
 * IEEE 802.15.4
 
-  * Add Decawave DW1000 driver
-  * Add "no auto start" option and local MAC address support to rf2xx
-  * Add support for Frame Pending Bit (FPB) handling in nrf5
-  * Add CSMA CA transmit capability to nrf5
-  * Add PAN coordinator mode support to nrf5
-  * Add support for promiscuous mode to nrf5
-  * Add support for energy scan function to nrf5
-  * Fix RX timestamp handling in nrf5
+  * Added Decawave DW1000 driver
+  * Added "no auto start" option and local MAC address support to rf2xx
+  * Added support for Frame Pending Bit (FPB) handling in nrf5
+  * Added CSMA CA transmit capability to nrf5
+  * Added PAN coordinator mode support to nrf5
+  * Added support for promiscuous mode to nrf5
+  * Added support for energy scan function to nrf5
+  * Fixed RX timestamp handling in nrf5
   * Various fixes to rf2xx
 
 * Interrupt Controller
 
-  * Fix PLIC register space
-  * <TBD>
+  * Fixed PLIC register space
+  * Added support for STM32L5 series
+  * Added GIC V3 driver
+  * Fixed ICFGRn access and config in GIC driver
+  * Optimized the arc v2 interrupt unit driver
 
 * IPM
 
-  * <TBD>
+  * Added CAVS DSP Intra-DSP Communication (IDC) driver
 
 * Keyboard Scan
 
-  * <TBD>
+  * Added interrupt support to the ft5336 touch controller driver
+  * Added SDL mouse driver
+
+* LED
+
+  * N/A
+
+* LED Strip
+
+  * N/A
+
+* LoRa
+
+  * Added a LoRa shell
+  * Replaced counter driver usage with k_timer calls
+  * Various fixes in sx1276 driver
 
 * Modem
 
-  * Add support for GSM 07.10 muxing protocol to generic GSM modem
-  * Add support for modem commands that do not have a line ending
-  * Add automatic detection of ublox-sara-r4 modem type
-  * Add automatic setting of APN for ublox-sara-r4
-  * Add sendmsg() support to ublox-sara-r4
-  * Fix UDP socket closing in ublox-sara-r4
-  * Fix RSSI calculation for Sara U201
-  * Fix TCP context release and RX socket src/dst port assignment in wncm14a2a
-  * Change PPP driver connection to generic GSM modem
+  * Added support for GSM 07.10 muxing protocol to generic GSM modem
+  * Added support for modem commands that do not have a line ending
+  * Added automatic detection of ublox-sara-r4 modem type
+  * Added automatic setting of APN for ublox-sara-r4
+  * Added sendmsg() support to ublox-sara-r4
+  * Fixed UDP socket closing in ublox-sara-r4
+  * Fixed RSSI calculation for Sara U201
+  * Fixed TCP context release and RX socket src/dst port assignment in wncm14a2a
+  * Changed PPP driver connection to generic GSM modem
+
+* Neural Net
+
+  * N/A
+
+* PCIe
+
+  * N/A
+
+* PECI
+
+  * Added Microchip XEC driver
 
 * Pinmux
 
-  * Fix compilation errors in rv32m1_vega pinmux
-  * <TBD>
+  * Fixed compilation errors in rv32m1_vega pinmux
 
 * PS/2
 
-  * <TBD>
+  * Tuned PS2 driver to support several mice brands
 
 * PWM
 
-  * Add support to stm32h7
+  * Added support to stm32h7
+  * Enhanced mcux ftm driver to configure pwm in ticks and allow configuring the clock prescaler
+  * Added mcux tpm driver
+  * Fixed nrfx driver to wait until PWM is stopped before restarting it
 
 * Sensor
 
-  * Add support for Analog Devices ADXL345 3-axis I2C accelerometer
-  * <TBD>
+  * Added support for Analog Devices ADXL345 3-axis I2C accelerometer
+  * Added Infineon DPS310 driver
+  * Fixed temperature conversion in SI7006 driver
+  * Added Honeywell MPR driver
+  * Added BQ27421 driver
+  * Added weighted average filter to NXP Kinetis temperature driver
+  * Enabled single shot mode in ENS210 driver
+  * Added forced sampling mode to BME280 driver
+  * Added IIS2MDC magnetometer driver
+  * Added IIS2DLPC accelerometer driver
+  * Added ISM330DHCX IMU driver
+  * Added MEC tachometer driver
+  * Fixed I2C and SPI bus communication in LIS2DH driver
 
 * Serial
 
-  * Add uart_mux driver that is used in GSM 07.10 muxing protocol
-  * Add support for parity setting from dts on stm32
-  * Add support for stm32l5
+  * Added uart_mux driver that is used in GSM 07.10 muxing protocol
+  * Added support for parity setting from dts on stm32
+  * Added support for stm32l5
+  * Various fixes in ns16550 driver
+  * Added XMC driver
+  * Added interrupt and runtime configuration support to Xilinx driver
+  * Fixed interrupt support in sifive driver
+  * Enhanced nrfx driver TX only mode support
+  * Added SAMV71 support to sam driver
 
 * SPI
 
-  * Add support for DMA client on stm32
+  * Added support for DMA client on stm32
+  * Increased clock frequency in mcux flexcomm driver
+  * Added power management support to cc13xx_cc26xx driver
 
 * Timer
 
-  * <TBD>
+  * Various fixes in stm32_lptim driver
+  * Removed RTC1 dependency from nrf driver
+  * Various fixes in arcv2_timer0 driver
+  * Fixed TICKLESS=n processing in nrf_rtc and stm32_lptim drivers
+  * Added CAVS DSP wall clock timer driver
+  * Implemented tickless support in xlnx_psttc_timer driver
 
 * USB
 
-  * Add experimental USB Audio implementation.
-  * Add support to stm32wb
-  * Fix PMA leak at reset on stm32
+  * Added experimental USB Audio implementation.
+  * Added support to stm32wb
+  * Fixed PMA leak at reset on stm32
+  * Various fixes in usb_dc_nrfx driver
+  * Refactored usb_dc_mcux_ehci driver
 
 * Video
 
-  * <TBD>
+  * Added dedicated video init priority
+  * Various fixes in sw_generator and mcux_csi
+  * Fixed video buffer alignment
 
 * Watchdog
 
-  * Add support on stm32g0
-  * Disable iwdg at boot on stm32
+  * Added support on stm32g0
+  * Disabled iwdg at boot on stm32
 
 * WiFi
 
-  * Add scan completion indication to eswifi
-  * Add support to ESP8266 and ESP32
+  * Added scan completion indication to eswifi
+  * Added support to ESP8266 and ESP32
 
 
 Networking
@@ -489,7 +595,8 @@ Bluetooth
   * Only control procedures supported by the peer are now used.
   * The Nordic nRF52820 IC is now supported
   * OpenISA/RV32M1:
-    * 2Mbps PHY support.
+
+    * 2 Mbps PHY support.
     * Radio deep sleep mode support.
     * Controller-based privacy support.
 
