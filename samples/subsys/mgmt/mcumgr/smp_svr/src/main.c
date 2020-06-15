@@ -7,6 +7,9 @@
 
 #include <zephyr.h>
 #include <stats/stats.h>
+#include "tinycbor/cbor.h"
+#include "cborattr/cborattr.h"
+#include "mgmt/mgmt.h"
 
 #ifdef CONFIG_MCUMGR_CMD_FS_MGMT
 #include <device.h>
@@ -45,13 +48,69 @@ STATS_SECT_DECL(smp_svr_stats) smp_svr_stats;
 
 #ifdef CONFIG_MCUMGR_CMD_FS_MGMT
 FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(cstorage);
-static struct fs_mount_t littlefs_mnt = {
-	.type = FS_LITTLEFS,
-	.fs_data = &cstorage,
-	.storage_dev = (void *)FLASH_AREA_ID(storage),
-	.mnt_point = "/lfs"
-};
+static struct fs_mount_t littlefs_mnt = { .type = FS_LITTLEFS,
+					  .fs_data = &cstorage,
+					  .storage_dev = (void *)FLASH_AREA_ID(
+						  storage),
+					  .mnt_point = "/lfs" };
 #endif
+
+/**********/
+
+#define MGMT_GROUP_ID_PEP 65
+
+static mgmt_handler_fn pep_mgmt_echo;
+static int pep_mgmt_echo(struct mgmt_ctxt *ctxt)
+{
+	printk(" CIALTRINET \n");
+	char echo_buf[128];
+	CborError err;
+
+	const struct cbor_attr_t attrs[2] = {
+        [0] = {
+            .attribute = "d",
+            .type = CborAttrTextStringType,
+            .addr.string = echo_buf,
+            .nodefault = 1,
+            .len = sizeof echo_buf,
+        },
+        [1] = {
+            .attribute = NULL
+        }
+    };
+
+	echo_buf[0] = '\0';
+
+	err = cbor_read_object(&ctxt->it, attrs);
+	if (err != 0) {
+		return MGMT_ERR_EINVAL;
+	}
+
+	err |= cbor_encode_text_stringz(&ctxt->encoder, "r");
+	err |= cbor_encode_text_string(&ctxt->encoder, echo_buf,
+				       strlen(echo_buf));
+
+	if (err != 0) {
+		return MGMT_ERR_ENOMEM;
+	}
+
+	return 0;
+}
+
+static const struct mgmt_handler pep_mgmt_group_handlers[] = {
+	{ pep_mgmt_echo, pep_mgmt_echo }
+};
+
+static struct mgmt_group pep_mgmt_group = {
+	.mg_handlers = pep_mgmt_group_handlers,
+	.mg_handlers_count = 1,
+	.mg_group_id = MGMT_GROUP_ID_PEP,
+};
+
+void pirillo_register_group()
+{
+	mgmt_register_group(&pep_mgmt_group);
+}
 
 void main(void)
 {
@@ -80,6 +139,8 @@ void main(void)
 #ifdef CONFIG_MCUMGR_CMD_STAT_MGMT
 	stat_mgmt_register_group();
 #endif
+	pirillo_register_group();
+
 #ifdef CONFIG_MCUMGR_SMP_BT
 	start_smp_bluetooth();
 #endif
