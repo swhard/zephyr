@@ -500,6 +500,9 @@ static enum ethernet_hw_caps eth_stm32_hal_get_capabilities(struct device *dev)
 #if defined(CONFIG_NET_VLAN)
 		| ETHERNET_HW_VLAN
 #endif
+#if defined(CONFIG_NET_PROMISCUOUS_MODE)
+		| ETHERNET_PROMISC_MODE
+#endif
 		;
 }
 
@@ -523,6 +526,18 @@ static int eth_stm32_hal_set_config(struct device *dev,
 			(dev_data->mac_addr[1] << 8) |
 			dev_data->mac_addr[0];
 		return 0;
+#if defined(CONFIG_NET_PROMISCUOUS_MODE)
+	case ETHERNET_CONFIG_TYPE_PROMISC_MODE:
+		dev_data = DEV_DATA(dev);
+		heth = &dev_data->heth;
+
+		if(config->promisc_mode) {
+			heth->Instance->MACFFR |= ETH_MACFFR_PM;
+		} else {
+			heth->Instance->MACFFR &= ~ETH_MACFFR_PM;
+		}
+		return 0;
+#endif
 	default:
 		break;
 	}
