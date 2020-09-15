@@ -92,9 +92,11 @@ static int ethernet_set_config(u32_t mgmt_request,
 		config.full_duplex = params->full_duplex;
 		type = ETHERNET_CONFIG_TYPE_DUPLEX;
 	} else if (mgmt_request == NET_REQUEST_ETHERNET_SET_MAC_ADDRESS) {
+#if !CONFIG_ETH_MAC2MAC
 		if (net_if_is_up(iface)) {
 			return -EACCES;
 		}
+#endif
 
 		/* We need to remove the old IPv6 link layer address, that is
 		 * generated from old MAC address, from network interface if

@@ -304,6 +304,13 @@ static void rx_thread(void *arg1, void *unused1, void *unused2)
 				}
 			}
 		} else if (res == -EAGAIN) {
+#if CONFIG_ETH_MAC2MAC
+			if (dev_data->link_up != true) {
+				dev_data->link_up = true;
+				net_eth_carrier_on(get_iface(dev_data,
+							     vlan_tag));
+			}
+#else
 			/* semaphore timeout period expired, check link status */
 			if (HAL_ETH_ReadPHYRegister(&dev_data->heth, PHY_BSR,
 				(uint32_t *) &status) == HAL_OK) {
@@ -323,6 +330,7 @@ static void rx_thread(void *arg1, void *unused1, void *unused2)
 					}
 				}
 			}
+#endif
 		}
 	}
 }
