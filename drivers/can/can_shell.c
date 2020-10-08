@@ -315,7 +315,7 @@ static int cmd_attach(const struct shell *shell, size_t argc, char **argv)
 {
 	static struct gnup gnup[4];
 	static int idgnup  = 0;
-	struct device *can_dev;
+	const struct device *can_dev;
 	int pos = 1;
 	bool rtr = false, ext = false, rtr_mask = false;
 	struct zcan_filter filter;
