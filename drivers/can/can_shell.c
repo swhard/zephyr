@@ -10,7 +10,7 @@
 #include <zephyr/types.h>
 #include <stdlib.h>
 
-static struct zcan_work work;
+static struct zcan_work work[4];
 
 static inline int read_config_options(const struct shell *shell, int pos,
 				      char **argv, bool *silent, bool *loopback)
@@ -185,11 +185,16 @@ static inline int read_data(const struct shell *shell, int pos, char **argv,
 	return i;
 }
 
+struct gnup{
+	struct shell *shell;
+	char name[10] ;
+};
+
 static void print_frame(struct zcan_frame *frame, void *arg)
 {
-	const struct shell *shell = (const struct shell *)arg;
+	const struct shell *shell = ((const struct gnup *)arg)->shell;
 
-	shell_fprintf(shell, SHELL_NORMAL, "|0x%-8x|%s|%s|%d|",
+	shell_fprintf(shell, SHELL_NORMAL, "%s |0x%-8x|%s|%s|%d|", ((const struct gnup *)arg)->name,
 		      frame->id_type == CAN_STANDARD_IDENTIFIER ?
 				frame->std_id : frame->ext_id,
 		      frame->id_type == CAN_STANDARD_IDENTIFIER ? "std" : "ext",
@@ -308,12 +313,20 @@ static int cmd_send(const struct shell *shell, size_t argc, char **argv)
 
 static int cmd_attach(const struct shell *shell, size_t argc, char **argv)
 {
-	const struct device *can_dev;
+	static struct gnup gnup[4];
+	static int idgnup  = 0;
+	struct device *can_dev;
 	int pos = 1;
 	bool rtr = false, ext = false, rtr_mask = false;
 	struct zcan_filter filter;
 	int ret;
 	uint32_t id, mask;
+
+	if (idgnup>3)
+	{
+		shell_error(shell, "MAXIMUM ATTACHED" );
+		return -EINVAL;
+	}
 
 	can_dev = device_get_binding(argv[pos]);
 	if (!can_dev) {
@@ -321,6 +334,10 @@ static int cmd_attach(const struct shell *shell, size_t argc, char **argv)
 			    argv[pos]);
 		return -EINVAL;
 	}
+	gnup[idgnup].shell=(struct shell *)shell;
+	strncpy(gnup[idgnup].name,can_dev->name,8);
+
+	shell_print(shell,"[%d] NAME: %s \n",idgnup, can_dev->name);
 
 	pos++;
 
@@ -365,8 +382,8 @@ static int cmd_attach(const struct shell *shell, size_t argc, char **argv)
 		    ext ? filter.ext_id_mask : filter.std_id_mask,
 		    filter.rtr_mask);
 
-	ret = can_attach_workq(can_dev, &k_sys_work_q, &work, print_frame,
-			       (void *)shell, &filter);
+	ret = can_attach_workq(can_dev, &k_sys_work_q, &work[idgnup], print_frame,
+			       (void *)&gnup[idgnup], &filter);
 	if (ret < 0) {
 		if (ret == CAN_NO_FREE_FILTER) {
 			shell_error(shell, "Can't attach, no free filter left");
@@ -376,7 +393,7 @@ static int cmd_attach(const struct shell *shell, size_t argc, char **argv)
 
 		return -EIO;
 	}
-
+	idgnup++;
 	shell_print(shell, "Filter ID: %d", ret);
 
 	return 0;

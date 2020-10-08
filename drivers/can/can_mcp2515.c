@@ -351,8 +351,8 @@ static int mcp2515_configure(const struct device *dev, enum can_mode mode,
 	__ASSERT(dev_cfg->tq_bs2 > dev_cfg->tq_sjw, "BS2 > SJW");
 
 	if (dev_cfg->osc_freq % (bit_length * bitrate * 2)) {
-		LOG_ERR("Prescaler is not a natural number! "
-			"prescaler = osc_rate / ((PROP + SEG1 + SEG2 + 1) "
+		LOG_ERR("Prescaler is not a natural number! \n"
+			"prescaler = osc_rate / ((PROP + SEG1 + SEG2 + 1) \n"
 			"* bitrate * 2)\n"
 			"prescaler = %d / ((%d + %d + %d + 1) * %d * 2)",
 			dev_cfg->osc_freq, dev_cfg->tq_prop,
@@ -495,7 +495,7 @@ static int mcp2515_attach_isr(const struct device *dev,
 	int filter_idx = 0;
 
 	__ASSERT(rx_cb != NULL, "response_ptr can not be null");
-
+	 
 	k_mutex_lock(&dev_data->mutex, K_FOREVER);
 
 	/* find free filter */
@@ -912,3 +912,43 @@ DEVICE_AND_API_INIT(can_mcp2515_1, DT_INST_LABEL(0), &mcp2515_init,
 		    CONFIG_CAN_MCP2515_INIT_PRIORITY, &can_api_funcs);
 
 #endif /* DT_NODE_HAS_STATUS(DT_DRV_INST(0), okay) */
+
+#if DT_NODE_HAS_STATUS(DT_DRV_INST(1), okay)
+
+static K_THREAD_STACK_DEFINE(mcp2515_int_thread_stack_2,
+			     CONFIG_CAN_MCP2515_INT_THREAD_STACK_SIZE);
+
+static struct mcp2515_data mcp2515_data_2 = {
+	.int_thread_stack = mcp2515_int_thread_stack_2,
+	.tx_cb[0].cb = NULL,
+	.tx_cb[1].cb = NULL,
+	.tx_cb[2].cb = NULL,
+	.tx_busy_map = 0U,
+	.filter_usage = 0U,
+};
+
+static const struct mcp2515_config mcp2515_config_2 = {
+	.spi_port = DT_INST_BUS_LABEL(1),
+	.spi_freq = DT_INST_PROP(1, spi_max_frequency),
+	.spi_slave = DT_INST_REG_ADDR(1),
+	.int_pin = DT_INST_GPIO_PIN(1, int_gpios),
+	.int_port = DT_INST_GPIO_LABEL(1, int_gpios),
+	.int_thread_stack_size = CONFIG_CAN_MCP2515_INT_THREAD_STACK_SIZE,
+	.int_thread_priority = CONFIG_CAN_MCP2515_INT_THREAD_PRIO,
+#if DT_INST_SPI_DEV_HAS_CS_GPIOS(1)
+	.spi_cs_pin = DT_INST_SPI_DEV_CS_GPIOS_PIN(1),
+	.spi_cs_port = DT_INST_SPI_DEV_CS_GPIOS_LABEL(1),
+#endif  /* DT_INST_SPI_DEV_HAS_CS_GPIOS(0) */
+	.tq_sjw = DT_INST_PROP(1, sjw),
+	.tq_prop = DT_INST_PROP(1, prop_seg),
+	.tq_bs1 = DT_INST_PROP(1, phase_seg1),
+	.tq_bs2 = DT_INST_PROP(1, phase_seg2),
+	.bus_speed = DT_INST_PROP(1, bus_speed),
+	.osc_freq = DT_INST_PROP(1, osc_freq)
+};
+
+DEVICE_AND_API_INIT(can_mcp2515_2, DT_INST_LABEL(1), &mcp2515_init,
+		    &mcp2515_data_2, &mcp2515_config_2, POST_KERNEL,
+		    CONFIG_CAN_MCP2515_INIT_PRIORITY, &can_api_funcs);
+
+#endif /* DT_NODE_HAS_STATUS(DT_DRV_INST(1), okay) */

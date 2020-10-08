@@ -497,6 +497,13 @@ static void rx_thread(void *arg1, void *unused1, void *unused2)
 				}
 			}
 		} else if (res == -EAGAIN) {
+#if CONFIG_ETH_MAC2MAC
+			if (dev_data->link_up != true) {
+				dev_data->link_up = true;
+				net_eth_carrier_on(get_iface(dev_data,
+							     vlan_tag));
+			}
+#else
 			/* semaphore timeout period expired, check link status */
 			hal_ret = read_eth_phy_register(&dev_data->heth,
 				    PHY_ADDR, PHY_BSR, (uint32_t *) &status);
@@ -517,6 +524,7 @@ static void rx_thread(void *arg1, void *unused1, void *unused2)
 					}
 				}
 			}
+#endif
 		}
 	}
 }
@@ -805,6 +813,9 @@ static enum ethernet_hw_caps eth_stm32_hal_get_capabilities(const struct device 
 #if defined(CONFIG_NET_VLAN)
 		| ETHERNET_HW_VLAN
 #endif
+#if defined(CONFIG_NET_PROMISCUOUS_MODE)
+		| ETHERNET_PROMISC_MODE
+#endif
 		;
 }
 
@@ -828,6 +839,18 @@ static int eth_stm32_hal_set_config(const struct device *dev,
 			(dev_data->mac_addr[1] << 8) |
 			dev_data->mac_addr[0];
 		return 0;
+#if defined(CONFIG_NET_PROMISCUOUS_MODE)
+	case ETHERNET_CONFIG_TYPE_PROMISC_MODE:
+		dev_data = DEV_DATA(dev);
+		heth = &dev_data->heth;
+
+		if(config->promisc_mode) {
+			heth->Instance->MACFFR |= ETH_MACFFR_PM;
+		} else {
+			heth->Instance->MACFFR &= ~ETH_MACFFR_PM;
+		}
+		return 0;
+#endif
 	default:
 		break;
 	}

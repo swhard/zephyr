@@ -592,8 +592,7 @@ static int ethernet_send(struct net_if *iface, struct net_pkt *pkt)
 	} else if (IS_ENABLED(CONFIG_NET_IPV6) &&
 		   net_pkt_family(pkt) == AF_INET6) {
 		ptype = htons(NET_ETH_PTYPE_IPV6);
-	} else if (IS_ENABLED(CONFIG_NET_SOCKETS_PACKET) &&
-		   net_pkt_family(pkt) == AF_PACKET) {
+	} else if (net_pkt_family(pkt) == AF_PACKET) {
 		struct net_context *context = net_pkt_context(pkt);
 
 		if (context && net_context_get_type(context) == SOCK_DGRAM) {

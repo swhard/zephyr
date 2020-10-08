@@ -20,9 +20,11 @@ LOG_MODULE_DECLARE(can_driver, CONFIG_CAN_LOG_LEVEL);
 
 #define CAN_INIT_TIMEOUT  (10 * sys_clock_hw_cycles_per_sec() / MSEC_PER_SEC)
 
-#if DT_NODE_HAS_COMPAT_STATUS(DT_NODELABEL(can1), st_stm32_can, okay) && \
-    DT_NODE_HAS_COMPAT_STATUS(DT_NODELABEL(can2), st_stm32_can, okay)
-#error Simultaneous use of CAN_1 and CAN_2 not supported yet
+#if 0
+#if DT_NODE_HAS_COMPAT_STATUS(DT_NODELABEL(can1), st_stm32_can, okay) &&       \
+	DT_NODE_HAS_COMPAT_STATUS(DT_NODELABEL(can2), st_stm32_can, okay)
+#message Simultaneous use of CAN_1 and CAN_2 not supported yet - fix
+#endif
 #endif
 
 /*
