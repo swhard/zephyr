@@ -126,6 +126,33 @@
 			label = "UART_2";
 		};
 
+		usart3: serial@40004800 {
+			compatible = "st,stm32-usart", "st,stm32-uart";
+			reg = <0x40004800 0x400>;
+			clocks = <&rcc STM32_CLOCK_BUS_APB1 0x00040000>;
+			interrupts = <29 0>;
+			status = "disabled";
+			label = "UART_3";
+		};
+
+		usart4: serial@40004C00 {
+			compatible = "st,stm32-usart", "st,stm32-uart";
+			reg = <0x40004C00 0x400>;
+			clocks = <&rcc STM32_CLOCK_BUS_APB1 0x00080000>;
+			interrupts = <29 0>;
+			status = "disabled";
+			label = "UART_4";
+		};
+
+		usart5: serial@40005000 {
+			compatible = "st,stm32-usart", "st,stm32-uart";
+			reg = <0x40005000 0x400>;
+			clocks = <&rcc STM32_CLOCK_BUS_APB1 0x00100000>;
+			interrupts = <29 0>;
+			status = "disabled";
+			label = "UART_5";
+		};
+
 		i2c1: i2c@40005400 {
 			compatible = "st,stm32-i2c-v2";
 			clock-frequency = <I2C_BITRATE_STANDARD>;
