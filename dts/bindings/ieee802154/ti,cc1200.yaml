@@ -11,3 +11,7 @@ properties:
     int-gpios:
       type: phandle-array
       required: true
+    rst-gpios:
+      type: phandle-array
+      required: false
+

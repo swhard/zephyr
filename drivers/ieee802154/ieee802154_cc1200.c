@@ -442,8 +442,11 @@ static inline bool verify_crc(struct cc1200_context *ctx, struct net_pkt *pkt)
 		return false;
 	}
 
-	net_pkt_set_ieee802154_rssi(pkt, fcs[0]);
-	net_pkt_set_ieee802154_lqi(pkt, fcs[1] & CC1200_FCS_LQI_MASK);
+	uint8_t rssi = fcs[0];
+	uint8_t lqi = fcs[1] & CC1200_FCS_LQI_MASK;
+	net_pkt_set_ieee802154_rssi(pkt, rssi);
+	net_pkt_set_ieee802154_lqi(pkt, lqi);
+	LOG_DBG("frame info LQI:%u RSSI:%d", lqi, (int8_t)fcs[0]);
 
 	return true;
 }
@@ -499,7 +502,7 @@ static void cc1200_rx(void *arg)
 			goto out;
 		}
 
-		log_stack_usage(&cc1200->rx_thread);
+		//log_stack_usage(&cc1200->rx_thread);
 		continue;
 flush:
 		LOG_DBG("Flushing RX");
@@ -536,7 +539,7 @@ static int cc1200_cca(const struct device *dev)
 		}
 	}
 
-	LOG_WRN("Busy");
+	LOG_DBG("Busy");
 
 	return -EBUSY;
 }
@@ -713,6 +716,13 @@ static int power_on_and_setup(const struct device *dev)
 {
 	struct cc1200_context *cc1200 = dev->data;
 
+	if (cc1200->rstgpio.dev) {
+		gpio_pin_set(cc1200->rstgpio.dev, cc1200->rstgpio.pin, 1);
+		k_busy_wait(100);
+		gpio_pin_set(cc1200->rstgpio.dev, cc1200->rstgpio.pin, 0);
+		k_busy_wait(100);
+	}
+
 	if (!instruct_sres(cc1200)) {
 		LOG_ERR("Cannot reset");
 		return -EIO;
@@ -747,6 +757,16 @@ static struct cc1200_gpio_configuration *configure_gpios(const struct device *de
 	gpio_pin_configure(gpio, cc1200->gpios[CC1200_GPIO_IDX_GPIO0].pin,
 			   GPIO_INPUT | DT_INST_GPIO_FLAGS(0, int_gpios));
 	cc1200->gpios[CC1200_GPIO_IDX_GPIO0].dev = gpio;
+
+#if DT_NODE_HAS_PROP(DT_DRV_INST(0), rst_gpios)
+	cc1200->rstgpio.dev = device_get_binding(DT_INST_GPIO_LABEL(0, rst_gpios));
+	cc1200->rstgpio.pin = DT_INST_GPIO_PIN(0, rst_gpios);
+	gpio_pin_configure(cc1200->rstgpio.dev, cc1200->rstgpio.pin,
+			GPIO_OUTPUT | DT_INST_GPIO_FLAGS(0, rst_gpios));
+#else
+	cc1200->rstgpio.dev = NULL;
+	cc1200->rstgpio.pin = 0;
+#endif
 
 	return cc1200->gpios;
 }
@@ -820,7 +840,7 @@ static int cc1200_init(const struct device *dev)
 			cc1200, NULL, NULL, K_PRIO_COOP(2), 0, K_NO_WAIT);
 	k_thread_name_set(&cc1200->rx_thread, "cc1200_rx");
 
-	LOG_INF("CC1200 initialized");
+	LOG_DBG("CC1200 initialized");
 
 	return 0;
 }
