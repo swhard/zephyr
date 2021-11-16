@@ -730,8 +730,17 @@ static void mcp2515_int_thread(const struct device *dev)
 	struct mcp2515_data *dev_data = DEV_DATA(dev);
 
 	while (1) {
-		k_sem_take(&dev_data->int_sem, K_FOREVER);
-		mcp2515_handle_interrupts(dev);
+		int ret = k_sem_take(&dev_data->int_sem, K_MSEC(1000));
+		if (ret == 0)
+		{
+			mcp2515_handle_interrupts(dev);
+		} else {
+			// detect if a spontaneous reset happened
+			uint8_t caninte;
+			mcp2515_cmd_read_reg(dev, MCP2515_ADDR_CANINTE, &caninte, 1);
+			if (caninte == 0)
+				k_panic();
+		}
 	}
 }
 
