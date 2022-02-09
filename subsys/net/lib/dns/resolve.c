@@ -746,6 +746,10 @@ static int dns_read(struct dns_resolve_context *ctx,
 		goto quit;
 	}
 
+	if (query_idx < 0) {
+		goto quit;
+	}
+
 	invoke_query_callback(ret, NULL, &ctx->queries[query_idx]);
 
 	/* Marks the end of the results */
