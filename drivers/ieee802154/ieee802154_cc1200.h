@@ -42,7 +42,6 @@ struct cc1200_context {
 	struct net_if *iface;
 	/**************************/
 	struct cc1200_gpio_configuration gpios[CC1200_GPIO_IDX_MAX];
-	struct cc1200_gpio_configuration rstgpio;
 	struct gpio_callback rx_tx_cb;
 	const struct device *spi;
 	struct spi_config spi_cfg;
