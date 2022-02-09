@@ -183,11 +183,8 @@ static inline void gpio0_int_handler(const struct device *port,
 	struct cc1200_context *cc1200 =
 		CONTAINER_OF(cb, struct cc1200_context, rx_tx_cb);
 
-	int level = gpio_pin_get_raw(
-			cc1200->gpios[CC1200_GPIO_IDX_GPIO0].dev,
-			cc1200->gpios[CC1200_GPIO_IDX_GPIO0].pin);
 	if (atomic_get(&cc1200->tx) == 1) {
-		if (level == 1) {
+		if (atomic_get(&cc1200->tx_start) == 0) {
 			atomic_set(&cc1200->tx_start, 1);
 		} else {
 			atomic_set(&cc1200->tx, 0);
@@ -195,9 +192,11 @@ static inline void gpio0_int_handler(const struct device *port,
 
 		k_sem_give(&cc1200->tx_sync);
 	} else {
-		atomic_set(&cc1200->rx, level);
-		if (level == 0) {
+		if (atomic_get(&cc1200->rx) == 1) {
 			k_sem_give(&cc1200->rx_lock);
+			atomic_set(&cc1200->rx, 0);
+		} else {
+			atomic_set(&cc1200->rx, 1);
 		}
 	}
 }
@@ -207,7 +206,7 @@ static void enable_gpio0_interrupt(struct cc1200_context *cc1200, bool enable)
 	gpio_pin_interrupt_configure(
 		cc1200->gpios[CC1200_GPIO_IDX_GPIO0].dev,
 		cc1200->gpios[CC1200_GPIO_IDX_GPIO0].pin,
-		enable ? GPIO_INT_EDGE_BOTH : GPIO_INT_DISABLE);
+		enable ? GPIO_INT_EDGE_TO_ACTIVE : GPIO_INT_DISABLE);
 }
 
 static void setup_gpio_callback(const struct device *dev)
