@@ -26,7 +26,7 @@
 
 LOG_MODULE_REGISTER(counter_rtc_stm32, CONFIG_COUNTER_LOG_LEVEL);
 
-#define T_TIME_OFFSET 946684800
+#define T_TIME_OFFSET 978307200
 
 #if defined(CONFIG_SOC_SERIES_STM32L4X)
 #define RTC_EXTI_LINE	LL_EXTI_LINE_18
@@ -341,14 +341,32 @@ static int rtc_stm32_init(const struct device *dev)
 
 	z_stm32_hsem_unlock(CFG_HW_RCC_SEMID);
 
-	if (LL_RTC_DeInit(RTC) != SUCCESS) {
-		return -EIO;
-	}
+#if defined(CONFIG_COUNTER_RTC_STM32_PRESERVE_COUNTING)
+	if (!LL_RTC_IsActiveFlag_INITS(RTC))
+	{
+#endif
+		if (LL_RTC_DeInit(RTC) != SUCCESS) {
+			return -EIO;
+		}
 
-	if (LL_RTC_Init(RTC, ((LL_RTC_InitTypeDef *)
-			      &cfg->ll_rtc_config)) != SUCCESS) {
-		return -EIO;
+		// Required to set INITS
+		LL_RTC_DisableWriteProtection(RTC);
+		if (LL_RTC_EnterInitMode(RTC) != ERROR)
+		{
+			LL_RTC_DATE_SetYear(RTC, 1);
+			LL_RTC_DisableInitMode(RTC);
+		} else {
+			return -EIO;
+		}
+		LL_RTC_EnableWriteProtection(RTC);
+
+		if (LL_RTC_Init(RTC, ((LL_RTC_InitTypeDef *)
+					  &cfg->ll_rtc_config)) != SUCCESS) {
+			return -EIO;
+		}
+#if defined(CONFIG_COUNTER_RTC_STM32_PRESERVE_COUNTING)
 	}
+#endif
 
 #ifdef RTC_CR_BYPSHAD
 	LL_RTC_DisableWriteProtection(RTC);
