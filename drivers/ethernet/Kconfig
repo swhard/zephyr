@@ -44,8 +44,31 @@ config ETH_QEMU_EXTRA_ARGS
 	  spaces between arguments. Example: "mac=02:03:04:f0:0d:01" or
 	  "mac=02:03:04:f0:0d:01,downscript=no"
 
+config ETH_FIXED_LINK
+	bool "disabled autonegotiation"
+	default n
+
+config ETH_FULLDUPLEX
+	bool "if no autonegotiation is selected, specify the fixed fullduplex mode"
+	depends on ETH_FIXED_LINK
+	default y
+
+choice
+	prompt "if no autonegotiation is selected, specify the fixed link speed"
+	depends on ETH_FIXED_LINK
+	default ETH_SPEED_100M
+
+config ETH_SPEED_100M
+	bool "100 Mbps"
+	
+config ETH_SPEED_10M
+	bool "10 Mbps"
+	
+endchoice
+	
 config ETH_MAC2MAC
 	bool "MAC2MAC configuration"
+	select ETH_FIXED_LINK
 	help
       No PHY is used to connect 2 MACs together. Link is always up. 
 
