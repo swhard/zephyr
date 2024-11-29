@@ -271,6 +271,11 @@ static int flash_stm32_write_protection(const struct device *dev, bool enable)
 			flash_stm32_sem_give(dev);
 			return rc;
 		}
+	} else {
+#if defined(CONFIG_SOC_SERIES_STM32F4X)
+		// workaround for spurious PGPERR and PGSERR (see #607655, which is not fully applicable to F4)
+		regs->SR = FLASH_SR_PGPERR | FLASH_SR_PGSERR;
+#endif
 	}
 
 #if defined(FLASH_CR_LOCK)
